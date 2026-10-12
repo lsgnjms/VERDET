@@ -9,9 +9,18 @@ Plan: Steps 1–8 below. The Mega signing spike is split off and gates Phase 4 o
 | 3 | `scripts/spike.py` — Phase 0 Hedera checkpoint | **Passed** 2026-10-12 |
 | 4 | `scripts/setup_hedera.py` | Done 2026-10-12 |
 | 5 | `app/models.py` + database (tables `users`, `meters`, `readings`, `offers`; partial unique index checked) | Done 2026-10-12 |
-| 6 | `app/auth.py` | To do |
-| 7 | `app/main.py` + templates | To do |
-| 8 | `tests/test_auth.py` | To do |
+| 6 | `app/auth.py` (argon2, Fernet, session helpers; session parts tested in Step 8) | Done 2026-10-12 |
+| 7 | `app/main.py` + templates (signup, login, logout, wallet card, HTMX balances) — smoke-tested with fake Hedera | Done 2026-10-12 |
+| 8 | `tests/test_auth.py` (17 tests, fake Hedera, in-memory DB) + `tests/conftest.py`, `pytest.ini` | Done 2026-10-12 |
+
+## Phase 1 checkpoint (Plan.md)
+- [x] `pytest tests/test_auth.py` passes (17/17)
+- [x] Database holds only encrypted keys (`gAAAA...`), checked on the real `verdet.db`
+- [x] `.env` and `verdet.db` are git-ignored
+- [x] First real signup: App ID `0.0.11006293`
+- [x] Second user in a second browser shows a **different** App ID (`0.0.11006387`) that opens on HashScan
+
+**Phase 1 checkpoint passed 2026-10-12.** Next: Phase 2 (meters and signed readings, using the simulator).
 
 ## Step 3 result (spike run, 2026-10-12)
 Throwaway IDs from the spike (not the real VERDET topics/token):

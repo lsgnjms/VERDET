@@ -1,0 +1,15 @@
+{% if balances %}
+<dl class="grid grid-cols-2 gap-4">
+  <div class="rounded-lg bg-slate-50 p-4">
+    <dt class="text-xs text-slate-500 uppercase tracking-wide">HBAR</dt>
+    <dd class="mt-1 font-mono text-xl">{{ balances.hbar_tinybar | hbar }}</dd>
+  </div>
+  <div class="rounded-lg bg-emerald-50 p-4">
+    <dt class="text-xs text-emerald-700 uppercase tracking-wide">VKWH</dt>
+    <dd class="mt-1 font-mono text-xl">{{ balances.vkwh_mwh | vkwh }}</dd>
+    <p class="mt-1 text-xs text-slate-500">Verified-energy reward token · 1 VKWH = 1 kWh</p>
+  </div>
+</dl>
+{% else %}
+<p class="text-sm text-slate-500">Balance not available yet. New accounts take a few seconds to appear on the mirror node; this refreshes every 10 s.</p>
+{% endif %}
