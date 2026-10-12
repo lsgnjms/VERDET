@@ -28,7 +28,7 @@ Precedent: GreenAfrica (2025 Hedera Africa Hackathon winner). Keep the build tha
 
 ## Repo layout
 ```
-app/        main.py, models.py, hedera.py, verify.py, ai.py, templates/, static/
+app/        main.py, models.py, auth.py, hedera.py, verify.py, ai.py, templates/, static/
 gateway/    canonical.py, simulator.py, serial_bridge.py, attacks/
 firmware/   meter/meter.ino
 scripts/    spike.py, setup_hedera.py
@@ -56,12 +56,16 @@ python gateway/serial_bridge.py --port COM3   # real meter
    It is built in exactly one Python place (`gateway/canonical.py`) and must match `firmware/meter/meter.ino` byte for byte. Change both together, bump `v1`, and update the tests.
 5. **Integers on the wire.** Energy is in mWh, power in mW, voltage in mV, current in mA. No floats in signed data.
 6. **Every reading decision, accepted or rejected, is submitted to the `readings` HCS topic.** Keep HCS messages under 1 KB.
-7. **Verification order is fixed:** registered → signature → replay (`seq > last`) → duplicate (`UNIQUE(meter_id, seq)`) → physics → AI. Use the rejection codes exactly: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `NIGHT_GENERATION`, `AI_ANOMALY` (`AI_UNAVAILABLE` is logged, not a rejection).
+7. **Verification order is fixed:** registered → signature → sequence check → physics → AI.
+   - Sequence check: `seq == last_seq` → `DUPLICATE` (the same window resent, i.e. an attempt to claim twice); `seq < last_seq` → `REPLAY` (an old window resent); only `seq > last_seq` continues.
+   - `last_seq` advances for **every reading that passes the signature check**, whether it is later accepted or rejected.
+   - Database backstop for races: a partial unique index on `(meter_id, seq) WHERE decision = 'accepted'`. A violation is reported as `DUPLICATE`. Rejected readings are stored too.
+   - Codes, used exactly: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `NIGHT_GENERATION`, `AI_ANOMALY` (`AI_UNAVAILABLE` is logged, not a rejection).
 8. **VKWH:** 1 VKWH = 1 kWh, 6 decimals (1 unit = 1 mWh). Mint only for accepted readings.
 9. **The marketplace buy is one atomic `TransferTransaction`** (VKWH and HBAR legs, both signatures). If the SDK can't do this, stop and ask; don't silently use two transfers.
 10. **Honest claims only.** No "trustless", no "carbon credits", no "real energy delivery" in the UI, docs or comments. Say "verified-energy reward token" and "trust-minimized and auditable".
 11. **Stay in scope.** If something isn't in `Plan.md`, ask before building it. Suggest it for §5 (future ideas) instead.
-12. **Finish phases in order.** A phase is done only when its checkpoint in `Plan.md` passes.
+12. **Finish phases in order.** A phase is done only when its checkpoint in `Plan.md` passes. Exception: the Mega signing spike is split off from Phase 0. The Hedera half of Phase 0 gates Phase 1; the Mega signing check gates **Phase 4 only** (the board arrives around Oct 14). Until then the simulator signs with PyNaCl using the same canonical string.
 
 ## Code style
 - Simple and readable over clever. Type hints on functions. Short docstrings.
@@ -75,3 +79,12 @@ python gateway/serial_bridge.py --port COM3   # real meter
 - HashScan testnet links: `https://hashscan.io/testnet/transaction/{txId}`, `/topic/{topicId}`, `/token/{tokenId}`, `/account/{accountId}`
 - Mirror node (testnet): `https://testnet.mirrornode.hedera.com/api/v1/`
 - Check SDK method names against the current SDK examples; don't guess from the JavaScript SDK.
+- The **operator** key comes from the Hedera portal and may be ECDSA or Ed25519. Parse it with the type-specific loader that matches the portal account; don't rely on auto-detection. **User** account keys VERDET creates are always Ed25519.
+- New users get 10 HBAR from the operator. Keep an eye on the operator's testnet balance.
+
+## Settled implementation details
+- Custodial keys are encrypted with Fernet (`cryptography`), keyed by `KEY_ENCRYPTION_SECRET`.
+- Treasury, token admin key and supply key = operator. Topics have `submit_key` = operator.
+- Routes are plain `def` (the SDK is synchronous). No migrations: `create_all()` at startup; delete `verdet.db` to reset locally.
+- Postgres driver `psycopg[binary]` is added in Phase 7, not before.
+- Branch: `main`. Commit at every passing checkpoint.

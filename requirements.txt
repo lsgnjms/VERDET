@@ -1,0 +1,21 @@
+# Web app
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+jinja2==3.1.6
+python-multipart==0.0.32  # lets FastAPI read HTML form posts
+itsdangerous==2.2.0       # signs the session cookie
+sqlmodel==0.0.48
+
+# Hedera
+hiero-sdk-python==0.3.0
+httpx==0.28.1             # mirror node REST calls
+
+# Crypto and auth
+pynacl==1.6.2             # Ed25519 signature checks for meter readings
+cryptography==50.0.2      # Fernet encryption of custodial keys
+argon2-cffi==25.1.0       # password hashing
+
+# Config, gateway, tests
+python-dotenv==1.2.4
+pyserial==3.5
+pytest==9.1.1
