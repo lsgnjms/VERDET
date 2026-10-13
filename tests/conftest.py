@@ -6,6 +6,10 @@ import os
 # variables that already exist, so the values in .env are ignored in tests.
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["SESSION_SECRET"] = "test-session-secret"
+os.environ["REGISTRY_TOPIC_ID"] = "0.0.1001"
+os.environ["READINGS_TOPIC_ID"] = "0.0.1002"
+os.environ["TRADES_TOPIC_ID"] = "0.0.1003"
+os.environ["VKWH_TOKEN_ID"] = "0.0.1004"
 
 import pytest  # noqa: E402
 from cryptography.fernet import Fernet  # noqa: E402
@@ -27,6 +31,13 @@ class FakeHedera:
         self.accounts_created = 0
         self.fail = False
         self.balances: dict | None = {"hbar_tinybar": 1_000_000_000, "vkwh_mwh": 0}
+        self.messages: list[tuple[str, str]] = []   # (topic_id, message) in order
+
+    def submit_message(self, topic_id: str, message: str) -> str:
+        if self.fail:
+            raise hedera.HederaError("Hedera is slow or unreachable, try again.")
+        self.messages.append((topic_id, message))
+        return f"0.0.7179539@1791817388.{len(self.messages):09d}"
 
     def create_user_account(self) -> tuple[str, str]:
         if self.fail:
@@ -51,6 +62,7 @@ def fake_hedera(monkeypatch) -> FakeHedera:
     fake = FakeHedera()
     monkeypatch.setattr(hedera, "create_user_account", fake.create_user_account)
     monkeypatch.setattr(hedera, "get_balances", fake.get_balances)
+    monkeypatch.setattr(hedera, "submit_message", fake.submit_message)
 
     def no_network():
         raise AssertionError("A test tried to reach Hedera")

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Meters · VERDET{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-4">Your meters</h1>
+
+{% if success %}
+<p class="mb-4 rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
+  Meter <strong>{{ success }}</strong> registered and recorded on Hedera.
+  <a href="{{ registry_url }}" target="_blank" rel="noopener" class="underline">View the registry message ↗</a>
+</p>
+{% endif %}
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto">
+  {% if meters %}
+  <table class="w-full text-sm">
+    <thead class="text-left text-slate-500 border-b border-slate-200">
+      <tr>
+        <th class="px-4 py-2 font-medium">Meter ID</th>
+        <th class="px-4 py-2 font-medium">Public key</th>
+        <th class="px-4 py-2 font-medium">Rated</th>
+        <th class="px-4 py-2 font-medium">Location</th>
+        <th class="px-4 py-2 font-medium">Last seq</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in meters %}
+      <tr class="border-b border-slate-100 last:border-0">
+        <td class="px-4 py-2 font-mono">{{ m.meter_id }}</td>
+        <td class="px-4 py-2 font-mono text-slate-500" title="{{ m.pubkey_hex }}">{{ m.pubkey_hex[:8] }}…{{ m.pubkey_hex[-8:] }}</td>
+        <td class="px-4 py-2">{{ m.rated_w }} W</td>
+        <td class="px-4 py-2">{{ m.lat }}, {{ m.lon }}</td>
+        <td class="px-4 py-2">{{ m.last_seq if m.last_seq >= 0 else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="px-4 py-6 text-sm text-slate-500">No meters yet. Add one below.</p>
+  {% endif %}
+</section>
+
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+  <h2 class="font-semibold mb-1">Add a meter</h2>
+  <p class="text-sm text-slate-500 mb-4">Use the public key the meter prints on first boot (the <code>PUB:</code> line). Registering records it on Hedera's <code>registry</code> topic.</p>
+
+  {% if error %}
+  <p class="mb-4 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{{ error }}</p>
+  {% endif %}
+
+  <form method="post" action="/meters" class="grid gap-4 sm:grid-cols-2"
+        onsubmit="const b = this.querySelector('button'); b.disabled = true; b.textContent = 'Recording on Hedera…';">
+    <label class="block">
+      <span class="text-sm font-medium">Meter ID</span>
+      <input name="meter_id" required maxlength="32" placeholder="VD-0001" value="{{ form.meter_id or '' }}"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono">
+    </label>
+    <label class="block">
+      <span class="text-sm font-medium">Rated watts</span>
+      <input name="rated_w" required inputmode="numeric" placeholder="10" value="{{ form.rated_w or '' }}"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2">
+    </label>
+    <label class="block sm:col-span-2">
+      <span class="text-sm font-medium">Public key (64 hex characters)</span>
+      <input name="pubkey_hex" required minlength="64" maxlength="64" value="{{ form.pubkey_hex or '' }}"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-xs">
+    </label>
+    <label class="block">
+      <span class="text-sm font-medium">Latitude</span>
+      <input name="lat" required inputmode="decimal" value="{{ form.lat }}"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2">
+    </label>
+    <label class="block">
+      <span class="text-sm font-medium">Longitude</span>
+      <input name="lon" required inputmode="decimal" value="{{ form.lon }}"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2">
+    </label>
+    <div class="sm:col-span-2">
+      <button class="rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-medium px-4 py-2">
+        Register meter
+      </button>
+    </div>
+  </form>
+</section>
+{% endblock %}

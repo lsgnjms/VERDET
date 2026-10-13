@@ -12,7 +12,11 @@
     <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
       <a href="/" class="font-bold text-lg tracking-tight text-emerald-700">VERDET</a>
       {% if user %}
-      <div class="flex items-center gap-3 text-sm">
+      <div class="flex items-center gap-4 text-sm">
+        <nav class="flex gap-3">
+          <a href="/wallet" class="text-slate-700 hover:text-emerald-700">Wallet</a>
+          <a href="/meters" class="text-slate-700 hover:text-emerald-700">Meters</a>
+        </nav>
         <span class="text-slate-500 hidden sm:inline">{{ user.email }}</span>
         <form method="post" action="/logout">
           <button class="text-slate-600 hover:text-slate-900 underline">Log out</button>

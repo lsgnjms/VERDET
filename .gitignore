@@ -1,5 +1,7 @@
 # Secrets
 .env
+# Simulated meter keys and seq counters
+gateway/.sim/
 
 # Python
 .venv/

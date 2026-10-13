@@ -1,0 +1,84 @@
+"""Reading verification, in the fixed order of CLAUDE.md rule 7:
+
+    registered -> signature -> sequence -> physics (Phase 3) -> AI (Phase 5)
+
+These are pure functions: no database, no network. The /api/readings route
+saves the result and moves the meter's last_seq forward.
+"""
+
+from dataclasses import dataclass, field
+
+from nacl.exceptions import BadSignatureError
+from nacl.signing import VerifyKey
+
+from app.models import Meter
+from gateway.canonical import canonical_string, reading_hash
+
+UNREGISTERED = "UNREGISTERED"
+BAD_SIGNATURE = "BAD_SIGNATURE"
+REPLAY = "REPLAY"
+DUPLICATE = "DUPLICATE"
+
+
+@dataclass
+class Decision:
+    decision: str                     # "accepted" or "rejected"
+    reasons: list[str] = field(default_factory=list)
+    hash: str = ""                    # sha256 of the canonical string
+    new_last_seq: int | None = None   # set when the meter's last_seq should change
+
+    @property
+    def accepted(self) -> bool:
+        return self.decision == "accepted"
+
+
+def signature_valid(pubkey_hex: str, canonical: str, sig_hex: str) -> bool:
+    """True if sig_hex is a valid Ed25519 signature of canonical under pubkey_hex.
+    Malformed hex or wrong lengths count as invalid, never as a crash.
+    """
+    try:
+        VerifyKey(bytes.fromhex(pubkey_hex)).verify(canonical.encode("utf-8"), bytes.fromhex(sig_hex))
+        return True
+    except (BadSignatureError, ValueError, TypeError):
+        return False
+
+
+def check_sequence(seq: int, last_seq: int) -> str | None:
+    """Rule 7: equal -> DUPLICATE, lower -> REPLAY, higher -> None (continue)."""
+    if seq == last_seq:
+        return DUPLICATE
+    if seq < last_seq:
+        return REPLAY
+    return None
+
+
+def verify_reading(reading: dict, meter: Meter | None) -> Decision:
+    """Run checks 1-3 on one reading. `meter` is None if meterId isn't registered.
+
+    Raises ValueError (from canonical_string) if the reading is malformed;
+    the route turns that into an HTTP 422 before any decision is made.
+    """
+    canonical = canonical_string(reading)
+    digest = reading_hash(canonical)
+
+    def reject(code: str, new_last_seq: int | None = None) -> Decision:
+        return Decision("rejected", [code], digest, new_last_seq)
+
+    # 1. Registered?
+    if meter is None:
+        return reject(UNREGISTERED)
+
+    # 2. Signed by this meter's key? (A bad signature never moves last_seq.)
+    if not signature_valid(meter.pubkey_hex, canonical, reading.get("sig", "")):
+        return reject(BAD_SIGNATURE)
+
+    # 3. Sequence. From here on the reading is genuine, so last_seq advances
+    #    whatever the outcome (rule 7). For REPLAY/DUPLICATE it stays the same.
+    seq = reading["seq"]
+    new_last_seq = max(seq, meter.last_seq)
+    problem = check_sequence(seq, meter.last_seq)
+    if problem:
+        return reject(problem, new_last_seq)
+
+    # 4-5. Physics (Phase 3) and AI (Phase 5) go here.
+    return Decision("accepted", [], digest, new_last_seq)

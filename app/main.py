@@ -5,14 +5,15 @@ Routes are plain `def` because the Hedera SDK is synchronous; FastAPI runs
 them in a thread pool so a slow Hedera call doesn't block other requests.
 """
 
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi import Body, Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -28,11 +29,14 @@ from app.auth import (
     normalize_email,
     verify_password,
 )
-from app.models import User, create_db, get_session
+from app.models import Meter, Reading, User, create_db, get_session
+from app.verify import DUPLICATE, Decision, verify_reading
+from gateway.canonical import METER_ID_PATTERN, canonical_string
 
 load_dotenv()
 
 MIN_PASSWORD_LENGTH = 8
+MAX_RATED_W = 10_000          # prototype: small DC panels only
 
 
 def _session_secret() -> str:
@@ -181,3 +185,157 @@ def wallet_balances(request: Request, user: CurrentUser):
         return Response(status_code=401)
     balances = hedera.get_balances(user.account_id)
     return templates.TemplateResponse(request, "_balances.html", {"balances": balances})
+
+
+# --- Meters -----------------------------------------------------------------
+
+def parse_meter_form(meter_id: str, pubkey_hex: str, rated_w: str, lat: str, lon: str) -> tuple[dict, str | None]:
+    """Clean up the Add-meter form. Returns (values, error message or None)."""
+    values = {
+        "meter_id": meter_id.strip(),
+        "pubkey_hex": pubkey_hex.strip().lower(),
+        "rated_w": rated_w.strip(),
+        "lat": lat.strip(),
+        "lon": lon.strip(),
+    }
+    if not METER_ID_PATTERN.match(values["meter_id"]):
+        return values, "Meter ID must be 1-32 letters, digits or dashes (e.g. VD-0001)."
+    key = values["pubkey_hex"]
+    if len(key) != 64 or any(c not in "0123456789abcdef" for c in key):
+        return values, "Public key must be the 64 hex characters the meter prints as PUB."
+    try:
+        rated = int(values["rated_w"])
+        lat_f, lon_f = float(values["lat"]), float(values["lon"])
+    except ValueError:
+        return values, "Rated watts must be a whole number; latitude and longitude must be numbers."
+    if not 1 <= rated <= MAX_RATED_W:
+        return values, f"Rated watts must be between 1 and {MAX_RATED_W}."
+    if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
+        return values, "Latitude must be -90 to 90 and longitude -180 to 180."
+    values.update(rated_w=rated, lat=lat_f, lon=lon_f)
+    return values, None
+
+
+def registry_message(meter: Meter, owner_account: str) -> str:
+    """The `registry` HCS message (Plan.md schema), compact JSON, under 1 KB."""
+    return json.dumps(
+        {"t": "meter.register", "v": 1, "meterId": meter.meter_id, "owner": owner_account,
+         "pubKey": meter.pubkey_hex, "ratedW": meter.rated_w, "lat": meter.lat, "lon": meter.lon},
+        separators=(",", ":"),
+    )
+
+
+def render_meters(request: Request, db: Session, user: User, status: int = 200, **extra):
+    meters = db.exec(select(Meter).where(Meter.owner_id == user.id).order_by(Meter.created_at)).all()
+    context = {"user": user, "meters": meters, "form": {"lat": "6.52", "lon": "3.38"}, **extra}
+    return templates.TemplateResponse(request, "meters.html", context, status_code=status)
+
+
+@app.get("/meters", response_class=HTMLResponse)
+def meters_page(request: Request, db: DbSession, user: CurrentUser):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return render_meters(request, db, user)
+
+
+@app.post("/meters", response_class=HTMLResponse)
+def add_meter(
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    meter_id: Annotated[str, Form()],
+    pubkey_hex: Annotated[str, Form()],
+    rated_w: Annotated[str, Form()],
+    lat: Annotated[str, Form()],
+    lon: Annotated[str, Form()],
+):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    values, error = parse_meter_form(meter_id, pubkey_hex, rated_w, lat, lon)
+    if error:
+        return render_meters(request, db, user, 400, error=error, form=values)
+    # Check before calling Hedera, so a rejected form never costs a fee.
+    if db.exec(select(Meter).where(Meter.meter_id == values["meter_id"])).first():
+        return render_meters(request, db, user, 400, error="That meter ID is already registered.", form=values)
+    if db.exec(select(Meter).where(Meter.pubkey_hex == values["pubkey_hex"])).first():
+        return render_meters(
+            request, db, user, 400, form=values,
+            error="That public key is already registered to another meter. One device, one meter.",
+        )
+
+    meter = Meter(owner_id=user.id, **values)
+    try:
+        tx_id = hedera.submit_message(hedera.topic_id("REGISTRY_TOPIC_ID"), registry_message(meter, user.account_id))
+    except hedera.HederaError as exc:
+        return render_meters(request, db, user, 503, error=f"Couldn't record the meter on Hedera: {exc}", form=values)
+
+    db.add(meter)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return render_meters(request, db, user, 400, error="That meter ID is already registered.", form=values)
+    return render_meters(request, db, user, success=meter.meter_id, registry_url=hedera.hashscan_tx(tx_id))
+
+
+# --- Readings API -----------------------------------------------------------
+
+def save_reading(db: Session, reading: dict, decision: Decision) -> Reading:
+    """Store one reading with its decision (accepted and rejected alike)."""
+    row = Reading(
+        meter_id=reading["meterId"],
+        seq=reading["seq"],
+        t_start_ms=reading["tStartMs"],
+        t_end_ms=reading["tEndMs"],
+        mwh=reading["mWh"],
+        peak_mw=reading["peakMw"],
+        avg_mv=reading["avgMv"],
+        avg_ma=reading["avgMa"],
+        hash=decision.hash,
+        decision=decision.decision,
+        reasons=",".join(decision.reasons),
+    )
+    db.add(row)
+    return row
+
+
+@app.post("/api/readings")
+def receive_reading(db: DbSession, reading: Annotated[dict, Body()]) -> JSONResponse:
+    """Receive one signed reading from a gateway, verify it, and store the decision.
+
+    No login: the meter's signature is what proves who sent it.
+    """
+    try:
+        canonical_string(reading)
+    except ValueError as exc:
+        # Malformed: not a decision, nothing is stored.
+        return JSONResponse({"error": str(exc)}, status_code=422)
+
+    meter = db.exec(select(Meter).where(Meter.meter_id == reading["meterId"])).first()
+    decision = verify_reading(reading, meter)
+    if meter and decision.new_last_seq is not None:
+        meter.last_seq = decision.new_last_seq
+        db.add(meter)
+    row = save_reading(db, reading, decision)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Race backstop (rule 7): another copy of this (meter, seq) was accepted
+        # at the same moment. Record this one as a DUPLICATE instead.
+        db.rollback()
+        decision = Decision("rejected", [DUPLICATE], decision.hash, decision.new_last_seq)
+        meter = db.exec(select(Meter).where(Meter.meter_id == reading["meterId"])).first()
+        meter.last_seq = max(meter.last_seq, decision.new_last_seq)
+        db.add(meter)
+        row = save_reading(db, reading, decision)
+        db.commit()
+    db.refresh(row)
+
+    return JSONResponse({
+        "readingId": row.id,
+        "meterId": row.meter_id,
+        "seq": row.seq,
+        "decision": decision.decision,
+        "reasons": decision.reasons,
+        "hash": decision.hash,
+    })
