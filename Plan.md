@@ -134,7 +134,7 @@ verdet/
 ```json
 {"t":"trade","v":1,"offerId":19,"seller":"0.0.a","buyer":"0.0.b","vkwh":"0.500000","hbar":"2","tx":"0.0.x@..."}
 ```
-Rejection codes: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `NIGHT_GENERATION`, `AI_ANOMALY`.
+Rejection codes: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `AI_ANOMALY`.
 
 ---
 
@@ -198,14 +198,14 @@ Don't start the next phase until the current checkpoint passes.
 ### Phase 3 — Physics rules, on-chain proof, rewards (Day 4, 4 h)
 **Goal:** Every decision is anchored on Hedera, and accepted energy mints VKWH to the meter's owner.
 
-- [ ] Physics checks: `peak ≤ 1.1 × ratedW`, `mWh ≤ peak × window`, no generation when the sun is down (pvlib solar position)
+- [ ] Physics checks: `peak ≤ 1.1 × ratedW`, `mWh ≤ peak × window` (night check dropped Oct 14: daylight demo; evening hardware testing must work)
 - [ ] Every decision → `readings` topic; store the transaction ID
 - [ ] Accepted → mint `mWh / 1e6` VKWH to the treasury → transfer to the owner
 - [ ] Readings table (HTMX auto-refresh): time, energy, decision, reasons, HashScan links
-- [ ] Simulator flags `--spike` and `--night`
+- [ ] Simulator flag `--spike`
 
 **Deliverables:** full rules pipeline, HCS anchoring, mint + transfer, readings table
-**Checkpoint:** 10 simulated windows → 10 messages visible on the topic in HashScan, and the owner's VKWH balance equals the sum of accepted mWh. `--spike` and `--night` are rejected, and those rejections are on HCS too.
+**Checkpoint:** 10 simulated windows → 10 messages visible on the topic in HashScan, and the owner's VKWH balance equals the sum of accepted mWh. `--spike` is rejected, and that rejection is on HCS too.
 **Effort:** 4 h
 
 ---
@@ -236,7 +236,7 @@ Don't start the next phase until the current checkpoint passes.
 - [ ] IsolationForest trained on simulated normal windows (features: ratio to clear-sky, ramp rate, peak/average, deviation from the meter's own history); save the model with joblib
 - [ ] Wire it into the pipeline after the physics checks; if it errors → rules-only, logged as `AI_UNAVAILABLE`
 - [ ] Simulator flag `--lamp` (steady, plausible-looking but inconsistent output)
-- [ ] `tests/test_ai.py`: normal accepted; spike, night and lamp flagged
+- [ ] `tests/test_ai.py`: normal accepted; spike and lamp flagged
 
 **Deliverables:** `app/ai.py`, saved model, tests, `AI_ANOMALY` decisions on HCS
 **Checkpoint:** `pytest tests/test_ai.py` passes. `--lamp` → `AI_ANOMALY` in the app and on HCS, and normal data is still accepted.
@@ -336,3 +336,4 @@ Don't start the next phase until the current checkpoint passes.
 - Redeeming VKWH for airtime, data or electricity credit (GreenAfrica-style)
 - Mini-grid operator dashboard and community energy pools
 - Generator-runtime sensing to measure diesel displacement directly
+- Night-generation rule (`NIGHT_GENERATION`): reject energy claimed while the sun is down at the meter's location (pvlib solar position). Needs a trusted window time (an RTC on the meter, or Hedera consensus time)

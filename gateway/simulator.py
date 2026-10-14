@@ -9,6 +9,7 @@ Usage:
   python gateway/simulator.py --show-key          # print the public key to register on /meters
   python gateway/simulator.py --fast              # one window every 5 s (time-compressed)
   python gateway/simulator.py --fast --count 10 --hour 12   # 10 windows of midday sun
+  python gateway/simulator.py --spike --count 1   # one signed but impossible reading -> PHYSICS_LIMIT
 """
 
 import argparse
@@ -32,6 +33,7 @@ LAGOS = timezone(timedelta(hours=1))   # WAT, no daylight saving
 SUNRISE_H, SUNSET_H = 6.75, 19.0       # rough Lagos day length
 WINDOW_S = 60                          # seconds of samples per reading
 PANEL_VMP_MV = 18_000                  # typical small-panel voltage at max power
+SPIKE_FACTOR = 3.0                     # --spike: claim ~3x the panel's rating
 
 
 # --- Meter identity (key + seq), like the Mega's EEPROM ---------------------
@@ -76,12 +78,17 @@ def sun_fraction(hour: float) -> float:
     return math.sin(math.pi * (hour - SUNRISE_H) / (SUNSET_H - SUNRISE_H))
 
 
-def simulate_window(meter_id: str, seq: int, hour: float, rated_w: int) -> dict:
-    """60 one-second samples -> one unsigned reading with integer units (rule 5)."""
+def simulate_window(meter_id: str, seq: int, hour: float, rated_w: int, spike: bool = False) -> dict:
+    """60 one-second samples -> one unsigned reading with integer units (rule 5).
+
+    spike=True fakes a faulty or dishonest sensor: about 3x the panel's rating,
+    whatever the sun is doing. The meter still signs it, so only physics catches it.
+    """
     clouds = random.uniform(0.85, 1.0)        # slow haze for this window
     total_mw = peak_mw = total_mv = total_ma = 0
     for _ in range(WINDOW_S):
-        frac = sun_fraction(hour) * clouds * random.uniform(0.97, 1.03)
+        sun = SPIKE_FACTOR if spike else sun_fraction(hour) * clouds
+        frac = sun * random.uniform(0.97, 1.03)
         power_mw = int(rated_w * 1000 * frac)
         volt_mv = int(PANEL_VMP_MV * (0.9 + 0.1 * min(frac, 1.0))) if power_mw else 0
         current_ma = power_mw * 1000 // volt_mv if volt_mv else 0
@@ -113,11 +120,11 @@ def send(url: str, reading: dict) -> dict:
     return resp.json()
 
 
-def next_reading(state: dict, hour: float, rated_w: int) -> dict:
+def next_reading(state: dict, hour: float, rated_w: int, spike: bool = False) -> dict:
     """Take the next seq, simulate the window, sign it, and save the new seq."""
     state["seq"] += 1
     save_meter(state)                         # the counter moves even if sending fails
-    return sign(state, simulate_window(state["meterId"], state["seq"], hour, rated_w))
+    return sign(state, simulate_window(state["meterId"], state["seq"], hour, rated_w, spike))
 
 
 def main() -> int:
@@ -128,6 +135,7 @@ def main() -> int:
     parser.add_argument("--fast", action="store_true", help="send a window every 5 s instead of 60 s")
     parser.add_argument("--count", type=int, default=0, help="stop after N windows (default: run until Ctrl+C)")
     parser.add_argument("--hour", type=float, help="pretend it's this Lagos hour, e.g. 12 for midday")
+    parser.add_argument("--spike", action="store_true", help="fake ~3x the panel rating (should be rejected: PHYSICS_LIMIT)")
     parser.add_argument("--show-key", action="store_true", help="print the public key and exit")
     args = parser.parse_args()
 
@@ -139,7 +147,8 @@ def main() -> int:
         return 0
 
     pause = 5 if args.fast else WINDOW_S
-    print(f"Simulating {args.meter} ({args.rated_w} W, key {pub[:8]}…) -> {args.url}, one window every {pause} s")
+    mode = " [SPIKE: faking ~3x rating]" if args.spike else ""
+    print(f"Simulating {args.meter} ({args.rated_w} W, key {pub[:8]}…) -> {args.url}, one window every {pause} s{mode}")
     start = datetime.now(LAGOS)
     sent = 0
     try:
@@ -147,7 +156,7 @@ def main() -> int:
             # In --fast mode each window still represents 1 minute of sun time.
             now = start + timedelta(minutes=sent) if args.fast else datetime.now(LAGOS)
             hour = args.hour if args.hour is not None else now.hour + now.minute / 60
-            reading = next_reading(state, hour, args.rated_w)
+            reading = next_reading(state, hour, args.rated_w, args.spike)
             try:
                 answer = send(args.url, reading)
                 reasons = ",".join(answer.get("reasons", [])) or "-"

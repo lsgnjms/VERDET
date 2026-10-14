@@ -1,4 +1,4 @@
-"""Phase 2: canonical string and verification checks 1-3. Run: pytest tests/test_verify.py"""
+"""Canonical string and verification checks 1-4. Run: pytest tests/test_verify.py"""
 
 import hashlib
 
@@ -9,9 +9,11 @@ from app.models import Meter
 from app.verify import (
     BAD_SIGNATURE,
     DUPLICATE,
+    PHYSICS_LIMIT,
     REPLAY,
     UNREGISTERED,
     check_sequence,
+    physics_ok,
     signature_valid,
     verify_reading,
 )
@@ -33,6 +35,18 @@ def make_reading(seq: int = 1, key: SigningKey = METER_KEY, **changes) -> dict:
     }
     reading["sig"] = key.sign(canonical_string(reading).encode()).signature.hex()
     reading.update(changes)   # applied AFTER signing, to simulate tampering
+    return reading
+
+
+def make_signed(seq: int = 1, key: SigningKey = METER_KEY, **values) -> dict:
+    """Like make_reading, but the changed values are signed too (an honest-looking
+    reading from the meter itself, e.g. a faulty or lying sensor)."""
+    reading = {
+        "meterId": "VD-0001", "seq": seq, "tStartMs": 0, "tEndMs": 60000,
+        "mWh": 167, "peakMw": 10120, "avgMv": 18000, "avgMa": 560,
+    }
+    reading.update(values)
+    reading["sig"] = key.sign(canonical_string(reading).encode()).signature.hex()
     return reading
 
 
@@ -165,3 +179,55 @@ def test_old_reading_is_replay():
 def test_verify_reading_rejects_malformed_input():
     with pytest.raises(ValueError):
         verify_reading(make_reading(mWh=1.5), make_meter())
+
+
+# --- Physics (Phase 3) --------------------------------------------------------
+
+def physics_reading(**changes) -> dict:
+    """Unsigned reading for a 10 W panel; physics_ok only looks at the numbers."""
+    reading = {"meterId": "VD-0001", "seq": 1, "tStartMs": 0, "tEndMs": 60000,
+               "mWh": 167, "peakMw": 10120, "avgMv": 18000, "avgMa": 560}
+    reading.update(changes)
+    return reading
+
+
+def test_physics_normal_reading_passes():
+    assert physics_ok(physics_reading(), rated_w=10)
+
+
+def test_physics_peak_exactly_at_110_percent_passes():
+    assert physics_ok(physics_reading(peakMw=11000, mWh=100), rated_w=10)
+
+
+def test_physics_peak_above_110_percent_fails():
+    assert not physics_ok(physics_reading(peakMw=11001, mWh=100), rated_w=10)
+
+
+def test_physics_energy_exactly_peak_times_window_passes():
+    # 12000 mW for 60 s = 200 mWh exactly (on a 20 W panel so the peak is allowed).
+    assert physics_ok(physics_reading(peakMw=12000, mWh=200), rated_w=20)
+
+
+def test_physics_energy_above_peak_times_window_fails():
+    assert not physics_ok(physics_reading(peakMw=12000, mWh=201), rated_w=20)
+
+
+@pytest.mark.parametrize("t_end", [0, -1])
+def test_physics_zero_or_negative_window_fails(t_end):
+    assert not physics_ok(physics_reading(tStartMs=0, tEndMs=t_end), rated_w=10)
+
+
+def test_physics_dark_window_passes():
+    assert physics_ok(physics_reading(mWh=0, peakMw=0, avgMv=0, avgMa=0), rated_w=10)
+
+
+def test_spike_reading_is_physics_limit_and_advances_seq():
+    # Correctly signed, but 3x the panel's rating: the meter is lying (or broken).
+    d = verify_reading(make_signed(seq=6, peakMw=30000, mWh=450), make_meter(last_seq=5))
+    assert d.reasons == [PHYSICS_LIMIT]
+    assert d.new_last_seq == 6        # signature was valid, so last_seq moves (rule 7)
+
+
+def test_sequence_is_checked_before_physics():
+    d = verify_reading(make_signed(seq=3, peakMw=30000, mWh=450), make_meter(last_seq=5))
+    assert d.reasons == [REPLAY]

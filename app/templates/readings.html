@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Readings · VERDET{% endblock %}
+{% block content %}
+<div class="flex items-baseline justify-between mb-4">
+  <h1 class="text-xl font-semibold">Readings</h1>
+  <span class="text-xs text-slate-400">Updates every 5 s</span>
+</div>
+<p class="text-sm text-slate-500 mb-4">
+  Every reading your meters send, accepted or rejected. Each decision is recorded on Hedera; accepted energy earns VKWH, the verified-energy reward token.
+</p>
+
+<div hx-get="/readings/table" hx-trigger="load, every 5s" hx-swap="innerHTML">
+  <p class="text-sm text-slate-400">Loading readings…</p>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 """Reading verification, in the fixed order of CLAUDE.md rule 7:
 
-    registered -> signature -> sequence -> physics (Phase 3) -> AI (Phase 5)
+    registered -> signature -> sequence -> physics -> AI (Phase 5)
 
 These are pure functions: no database, no network. The /api/readings route
 saves the result and moves the meter's last_seq forward.
@@ -18,6 +18,9 @@ UNREGISTERED = "UNREGISTERED"
 BAD_SIGNATURE = "BAD_SIGNATURE"
 REPLAY = "REPLAY"
 DUPLICATE = "DUPLICATE"
+PHYSICS_LIMIT = "PHYSICS_LIMIT"
+
+MS_PER_HOUR = 3_600_000
 
 
 @dataclass
@@ -52,8 +55,22 @@ def check_sequence(seq: int, last_seq: int) -> str | None:
     return None
 
 
+def physics_ok(reading: dict, rated_w: int) -> bool:
+    """Electrical sanity, in integer maths (no float rounding):
+
+    - peak power at most 1.1 x the panel rating:    peakMw * 10 <= rated_w * 1000 * 11
+    - energy at most peak power for the whole window: mWh * 3_600_000 <= peakMw * window_ms
+    """
+    window_ms = reading["tEndMs"] - reading["tStartMs"]
+    if window_ms <= 0:
+        return False
+    if reading["peakMw"] * 10 > rated_w * 1000 * 11:
+        return False
+    return reading["mWh"] * MS_PER_HOUR <= reading["peakMw"] * window_ms
+
+
 def verify_reading(reading: dict, meter: Meter | None) -> Decision:
-    """Run checks 1-3 on one reading. `meter` is None if meterId isn't registered.
+    """Run checks 1-4 on one reading. `meter` is None if meterId isn't registered.
 
     Raises ValueError (from canonical_string) if the reading is malformed;
     the route turns that into an HTTP 422 before any decision is made.
@@ -80,5 +97,9 @@ def verify_reading(reading: dict, meter: Meter | None) -> Decision:
     if problem:
         return reject(problem, new_last_seq)
 
-    # 4-5. Physics (Phase 3) and AI (Phase 5) go here.
+    # 4. Physics: could this panel really have produced this?
+    if not physics_ok(reading, meter.rated_w):
+        return reject(PHYSICS_LIMIT, new_last_seq)
+
+    # 5. AI (Phase 5) goes here.
     return Decision("accepted", [], digest, new_last_seq)

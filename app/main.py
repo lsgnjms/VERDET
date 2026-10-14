@@ -8,6 +8,7 @@ them in a thread pool so a slow Hedera call doesn't block other requests.
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.sessions import SessionMiddleware
@@ -37,6 +39,8 @@ load_dotenv()
 
 MIN_PASSWORD_LENGTH = 8
 MAX_RATED_W = 10_000          # prototype: small DC panels only
+READINGS_SHOWN = 50           # rows in the readings table
+LAGOS = timezone(timedelta(hours=1))   # WAT, no daylight saving
 
 
 def _session_secret() -> str:
@@ -72,9 +76,18 @@ def format_hbar(tinybar: int) -> str:
     return f"{whole}.{frac_str}"
 
 
+def format_lagos_time(moment: datetime) -> str:
+    """Stored times are UTC (SQLite drops the timezone); show them in Lagos time."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(LAGOS).strftime("%d %b %H:%M:%S")
+
+
 templates.env.filters["vkwh"] = format_vkwh
 templates.env.filters["hbar"] = format_hbar
+templates.env.filters["lagos_time"] = format_lagos_time
 templates.env.globals["hashscan_account"] = hedera.hashscan_account
+templates.env.globals["hashscan_tx"] = hedera.hashscan_tx
 
 CurrentUser = Annotated[User | None, Depends(current_user)]
 DbSession = Annotated[Session, Depends(get_session)]
@@ -187,6 +200,44 @@ def wallet_balances(request: Request, user: CurrentUser):
     return templates.TemplateResponse(request, "_balances.html", {"balances": balances})
 
 
+# --- Readings page ------------------------------------------------------------
+
+def user_readings_context(db: Session, user: User) -> dict:
+    """The latest readings from this user's meters, plus accepted totals."""
+    meter_ids = list(db.exec(select(Meter.meter_id).where(Meter.owner_id == user.id)))
+    if not meter_ids:
+        return {"readings": [], "accepted_mwh": 0, "accepted_count": 0, "has_meters": False}
+    readings = db.exec(
+        select(Reading).where(Reading.meter_id.in_(meter_ids)).order_by(Reading.id.desc()).limit(READINGS_SHOWN)
+    ).all()
+    accepted_mwh, accepted_count = db.exec(
+        select(func.coalesce(func.sum(Reading.mwh), 0), func.count(Reading.id))
+        .where(Reading.meter_id.in_(meter_ids), Reading.decision == "accepted")
+    ).one()
+    # Rewarded = accepted AND the mint went through (differs if Hedera was down).
+    rewarded_mwh = db.exec(
+        select(func.coalesce(func.sum(Reading.mwh), 0))
+        .where(Reading.meter_id.in_(meter_ids), Reading.decision == "accepted", Reading.mint_tx.is_not(None))
+    ).one()
+    return {"readings": readings, "accepted_mwh": accepted_mwh, "accepted_count": accepted_count,
+            "rewarded_mwh": rewarded_mwh, "has_meters": True}
+
+
+@app.get("/readings", response_class=HTMLResponse)
+def readings_page(request: Request, user: CurrentUser):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request, "readings.html", {"user": user})
+
+
+@app.get("/readings/table", response_class=HTMLResponse)
+def readings_table(request: Request, db: DbSession, user: CurrentUser):
+    """HTMX partial: the readings table, refreshed every 5 s."""
+    if not user:
+        return Response(status_code=401)
+    return templates.TemplateResponse(request, "_readings_table.html", user_readings_context(db, user))
+
+
 # --- Meters -----------------------------------------------------------------
 
 def parse_meter_form(meter_id: str, pubkey_hex: str, rated_w: str, lat: str, lon: str) -> tuple[dict, str | None]:
@@ -265,7 +316,7 @@ def add_meter(
 
     meter = Meter(owner_id=user.id, **values)
     try:
-        tx_id = hedera.submit_message(hedera.topic_id("REGISTRY_TOPIC_ID"), registry_message(meter, user.account_id))
+        tx_id = hedera.submit_message(hedera.config_id("REGISTRY_TOPIC_ID"), registry_message(meter, user.account_id))
     except hedera.HederaError as exc:
         return render_meters(request, db, user, 503, error=f"Couldn't record the meter on Hedera: {exc}", form=values)
 
@@ -297,6 +348,56 @@ def save_reading(db: Session, reading: dict, decision: Decision) -> Reading:
     )
     db.add(row)
     return row
+
+
+def reward_owner(db: Session, row: Reading) -> tuple[str, str]:
+    """Mint the reading's mWh as VKWH into the treasury, then send it to the
+    meter's owner. Returns (mint_tx, reward_tx). Raises HederaError."""
+    meter = db.exec(select(Meter).where(Meter.meter_id == row.meter_id)).one()
+    owner = db.get(User, meter.owner_id)
+    token_id = hedera.config_id("VKWH_TOKEN_ID")
+    mint_tx = hedera.mint_vkwh(token_id, row.mwh)
+    reward_tx = hedera.reward_vkwh(token_id, owner.account_id, row.mwh)
+    return mint_tx, reward_tx
+
+
+def readings_message(row: Reading, reward_tx: str | None) -> str:
+    """The `readings` HCS message (Plan.md schema), compact JSON, under 1 KB."""
+    msg = {
+        "t": "reading", "v": 1, "meterId": row.meter_id, "seq": row.seq,
+        "mWh": row.mwh, "peakMw": row.peak_mw, "hash": row.hash,
+        "decision": row.decision, "reasons": row.reasons.split(",") if row.reasons else [],
+    }
+    if row.decision == "accepted":
+        msg["mintTx"] = row.mint_tx
+        msg["rewardTx"] = reward_tx
+    return json.dumps(msg, separators=(",", ":"))
+
+
+def anchor_and_reward(db: Session, row: Reading) -> dict:
+    """After the decision is saved: reward accepted energy, then record the
+    decision on the `readings` topic (rule 6). Hedera failures never undo the
+    decision; the missing tx ID shows up as "pending" instead."""
+    result: dict = {"mintTx": None, "rewardTx": None, "hcsTx": None}
+    errors = []
+    if row.decision == "accepted" and row.mwh > 0:
+        try:
+            row.mint_tx, result["rewardTx"] = reward_owner(db, row)
+            result["mintTx"] = row.mint_tx
+        except hedera.HederaError as exc:
+            errors.append(f"Reward not sent: {exc}")
+    try:
+        row.hcs_tx = hedera.submit_message(
+            hedera.config_id("READINGS_TOPIC_ID"), readings_message(row, result["rewardTx"])
+        )
+        result["hcsTx"] = row.hcs_tx
+    except hedera.HederaError as exc:
+        errors.append(f"Decision not recorded on Hedera: {exc}")
+    db.add(row)
+    db.commit()
+    if errors:
+        result["hederaError"] = " ".join(errors)
+    return result
 
 
 @app.post("/api/readings")
@@ -331,6 +432,9 @@ def receive_reading(db: DbSession, reading: Annotated[dict, Body()]) -> JSONResp
         db.commit()
     db.refresh(row)
 
+    # The decision is safely stored; now the slow part: Hedera.
+    hedera_result = anchor_and_reward(db, row)
+
     return JSONResponse({
         "readingId": row.id,
         "meterId": row.meter_id,
@@ -338,4 +442,5 @@ def receive_reading(db: DbSession, reading: Annotated[dict, Body()]) -> JSONResp
         "decision": decision.decision,
         "reasons": decision.reasons,
         "hash": decision.hash,
+        **hedera_result,
     })

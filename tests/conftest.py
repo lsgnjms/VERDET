@@ -29,15 +29,36 @@ class FakeHedera:
 
     def __init__(self) -> None:
         self.accounts_created = 0
-        self.fail = False
+        self.fail = False          # every call fails
+        self.fail_mint = False     # only mint/reward fail
+        self.fail_hcs = False      # only submit_message fails
         self.balances: dict | None = {"hbar_tinybar": 1_000_000_000, "vkwh_mwh": 0}
         self.messages: list[tuple[str, str]] = []   # (topic_id, message) in order
+        self.mints: list[tuple[str, int]] = []      # (token_id, amount_mwh)
+        self.rewards: list[tuple[str, str, int]] = []   # (token_id, to_account, amount_mwh)
+        self.tx_count = 0
+
+    def _tx(self) -> str:
+        self.tx_count += 1
+        return f"0.0.7179539@1791817388.{self.tx_count:09d}"
 
     def submit_message(self, topic_id: str, message: str) -> str:
-        if self.fail:
+        if self.fail or self.fail_hcs:
             raise hedera.HederaError("Hedera is slow or unreachable, try again.")
         self.messages.append((topic_id, message))
-        return f"0.0.7179539@1791817388.{len(self.messages):09d}"
+        return self._tx()
+
+    def mint_vkwh(self, token_id: str, amount_mwh: int) -> str:
+        if self.fail or self.fail_mint:
+            raise hedera.HederaError("Hedera is slow or unreachable, try again.")
+        self.mints.append((token_id, amount_mwh))
+        return self._tx()
+
+    def reward_vkwh(self, token_id: str, to_account: str, amount_mwh: int) -> str:
+        if self.fail or self.fail_mint:
+            raise hedera.HederaError("Hedera is slow or unreachable, try again.")
+        self.rewards.append((token_id, to_account, amount_mwh))
+        return self._tx()
 
     def create_user_account(self) -> tuple[str, str]:
         if self.fail:
@@ -63,6 +84,8 @@ def fake_hedera(monkeypatch) -> FakeHedera:
     monkeypatch.setattr(hedera, "create_user_account", fake.create_user_account)
     monkeypatch.setattr(hedera, "get_balances", fake.get_balances)
     monkeypatch.setattr(hedera, "submit_message", fake.submit_message)
+    monkeypatch.setattr(hedera, "mint_vkwh", fake.mint_vkwh)
+    monkeypatch.setattr(hedera, "reward_vkwh", fake.reward_vkwh)
 
     def no_network():
         raise AssertionError("A test tried to reach Hedera")

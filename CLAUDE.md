@@ -43,7 +43,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload            # run the app at http://127.0.0.1:8000
 pytest                                   # run all tests
 python scripts/setup_hedera.py           # one-time: create topics + VKWH token
-python gateway/simulator.py --fast       # simulated meter (flags: --spike --night --lamp)
+python gateway/simulator.py --fast       # simulated meter (flags: --spike --lamp)
 python gateway/serial_bridge.py --port COM3   # real meter
 ```
 
@@ -60,7 +60,7 @@ python gateway/serial_bridge.py --port COM3   # real meter
    - Sequence check: `seq == last_seq` → `DUPLICATE` (the same window resent, i.e. an attempt to claim twice); `seq < last_seq` → `REPLAY` (an old window resent); only `seq > last_seq` continues.
    - `last_seq` advances for **every reading that passes the signature check**, whether it is later accepted or rejected.
    - Database backstop for races: a partial unique index on `(meter_id, seq) WHERE decision = 'accepted'`. A violation is reported as `DUPLICATE`. Rejected readings are stored too.
-   - Codes, used exactly: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `NIGHT_GENERATION`, `AI_ANOMALY` (`AI_UNAVAILABLE` is logged, not a rejection).
+   - Codes, used exactly: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `AI_ANOMALY` (`AI_UNAVAILABLE` is logged, not a rejection). There is no night rule, by decision (Oct 14): the demo is filmed in daylight, and evening hardware testing must work.
 8. **VKWH:** 1 VKWH = 1 kWh, 6 decimals (1 unit = 1 mWh). Mint only for accepted readings.
 9. **The marketplace buy is one atomic `TransferTransaction`** (VKWH and HBAR legs, both signatures). If the SDK can't do this, stop and ask; don't silently use two transfers.
 10. **Honest claims only.** No "trustless", no "carbon credits", no "real energy delivery" in the UI, docs or comments. Say "verified-energy reward token" and "trust-minimized and auditable".

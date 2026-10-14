@@ -144,8 +144,8 @@ def _run(tx, *signers: PrivateKey):
 
 # --- HCS topics -------------------------------------------------------------
 
-def topic_id(env_name: str) -> str:
-    """A topic ID from .env, e.g. topic_id("REGISTRY_TOPIC_ID")."""
+def config_id(env_name: str) -> str:
+    """A topic or token ID from .env, e.g. config_id("READINGS_TOPIC_ID")."""
     value = os.getenv(env_name, "").strip()
     if not value:
         raise HederaError(f"{env_name} is missing from .env. Run scripts/setup_hedera.py first.")

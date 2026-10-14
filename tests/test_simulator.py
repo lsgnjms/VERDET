@@ -51,3 +51,16 @@ def test_seq_and_key_persist_across_restarts(sim_state):
     second = simulator.next_reading(reloaded, hour=12, rated_w=10)
     assert (first["seq"], second["seq"]) == (0, 1)
     assert simulator.public_key_hex(reloaded) == simulator.public_key_hex(sim_state)
+
+
+def test_spike_is_signed_but_fails_physics(sim_state):
+    reading = simulator.next_reading(sim_state, hour=12, rated_w=10, spike=True)
+    assert reading["peakMw"] > 10 * 1000 * 1.1           # well above the 11 W limit
+    decision = verify_reading(reading, registered(sim_state))
+    assert decision.reasons == ["PHYSICS_LIMIT"]          # signature was fine; physics caught it
+    assert decision.new_last_seq == reading["seq"]
+
+
+def test_spike_works_even_at_night():
+    reading = simulator.simulate_window("VD-TEST", seq=0, hour=2, rated_w=10, spike=True)
+    assert reading["peakMw"] > 11_000
