@@ -26,7 +26,7 @@
 //   0..3   magic "VDK1"  (marks that a key exists)
 //   4..35  Ed25519 private key (32 bytes)
 //   36..39 reserved for the sequence number (Phase 4)
-const uint8_t MAGIC[4] = {'V', 'D', 'K', '1'};
+const uint8_t MAGIC[4] = { 'V', 'D', 'K', '1' };
 const int ADDR_MAGIC = 0;
 const int ADDR_KEY = 4;
 
