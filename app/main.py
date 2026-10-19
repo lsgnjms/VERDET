@@ -7,6 +7,7 @@ them in a thread pool so a slow Hedera call doesn't block other requests.
 
 import json
 import os
+import secrets
 from contextlib import asynccontextmanager
 from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
@@ -33,7 +34,7 @@ from app.auth import (
     normalize_email,
     verify_password,
 )
-from app.models import Meter, Offer, Reading, User, create_db, get_session, utc_now
+from app.models import Meter, Offer, Reading, Redemption, User, create_db, get_session, utc_now
 from app.verify import DUPLICATE, Decision, signature_valid, verify_reading
 from gateway.canonical import METER_ID_PATTERN, canonical_string, reading_hash
 
@@ -732,6 +733,25 @@ def price_in_band(amount_mwh: int, price_tinybar: int) -> bool:
     return PRICE_MIN_PER_KWH <= unit_price(amount_mwh, price_tinybar) <= PRICE_MAX_PER_KWH
 
 
+MIN_OFFER_MWH = 100                          # 0.0001 VKWH = 0.1 Wh: smaller isn't worth a transaction
+PRICE_REFERENCE_PER_KWH = Decimal(os.getenv("PRICE_REFERENCE_HBAR_PER_KWH", "10"))
+
+
+def offer_total(amount_mwh: int, unit_tinybar_per_kwh: int) -> int:
+    """Total tinybars for an amount at a price per kWh: mWh x (tinybar/kWh) / 1,000,000, rounded down."""
+    return amount_mwh * unit_tinybar_per_kwh // 1_000_000
+
+
+def suggested_price(last_trade: Offer | None) -> Decimal:
+    """The pre-filled price per kWh: the last trade's price if it's inside the band,
+    otherwise the reference price (clamped into the band)."""
+    if last_trade is not None:
+        last = unit_price(last_trade.amount_mwh, last_trade.price_tinybar)
+        if PRICE_MIN_PER_KWH <= last <= PRICE_MAX_PER_KWH:
+            return last.quantize(Decimal("0.01"))
+    return min(max(PRICE_REFERENCE_PER_KWH, PRICE_MIN_PER_KWH), PRICE_MAX_PER_KWH)
+
+
 def parse_units(text: str, decimals: int) -> int | None:
     """'0.5' with 6 decimals -> 500000. None if not a positive number with at
     most `decimals` decimal places. Uses Decimal, so no float rounding."""
@@ -808,6 +828,7 @@ def market_context(db: Session, user: User) -> dict:
         "user": user, "users": users, "balances": balances, "listed_mwh": listed, "available_mwh": available,
         "offers": others, "my_offers": my_offers, "trades": trades, "price_history": price_history,
         "band": {"min": PRICE_MIN_PER_KWH, "max": PRICE_MAX_PER_KWH},
+        "suggested": suggested_price(trades[0] if trades else None), "min_offer_mwh": MIN_OFFER_MWH,
         "ticker": {"last": trades[0] if trades else None, "volume_24h_mwh": volume_24h,
                    "open_count": len(open_offers)},
     }
@@ -828,20 +849,26 @@ def create_offer(
     db: DbSession,
     user: CurrentUser,
     amount_vkwh: Annotated[str, Form()],
-    price_hbar: Annotated[str, Form()],
+    price_per_kwh: Annotated[str, Form()],
 ):
-    """List VKWH for sale at a fixed HBAR price."""
+    """List VKWH for sale. The seller sets the price per kWh (like a limit price on
+    an exchange); the total is computed exactly in tinybars."""
     if not user:
         return RedirectResponse("/login", status_code=303)
     amount = parse_units(amount_vkwh, VKWH_DECIMALS)
-    price = parse_units(price_hbar, HBAR_DECIMALS)
+    unit_tinybar = parse_units(price_per_kwh, HBAR_DECIMALS)      # tinybars per kWh
+    price = offer_total(amount, unit_tinybar) if amount and unit_tinybar else None
     if amount is None:
-        flash(request, "error", "Amount must be a positive number of VKWH with at most 6 decimals (e.g. 0.5).")
-    elif price is None:
-        flash(request, "error", "Price must be a positive number of HBAR with at most 8 decimals (e.g. 2).")
-    elif not price_in_band(amount, price):
+        flash(request, "error", "Amount must be a positive number of VKWH with at most 6 decimals (e.g. 0.0004).")
+    elif amount < MIN_OFFER_MWH:
+        flash(request, "error", f"The smallest offer is {format_vkwh(MIN_OFFER_MWH)} VKWH ({format_energy(MIN_OFFER_MWH)}).")
+    elif unit_tinybar is None:
+        flash(request, "error", "Price per kWh must be a positive number of HBAR with at most 8 decimals (e.g. 10).")
+    elif not PRICE_MIN_PER_KWH <= Decimal(unit_tinybar) / Decimal(10**8) <= PRICE_MAX_PER_KWH:
         flash(request, "error", f"Price must be between {PRICE_MIN_PER_KWH} and {PRICE_MAX_PER_KWH} HBAR per kWh. "
-                                f"Yours is {unit_price(amount, price):,.2f} HBAR per kWh.")
+                                f"Yours is {Decimal(unit_tinybar) / Decimal(10**8):,.2f} HBAR per kWh.")
+    elif price < 1:
+        flash(request, "error", "That total is less than the smallest HBAR unit. List a larger amount.")
     else:
         balances = hedera.get_balances(user.account_id)
         if balances is None:
@@ -853,7 +880,8 @@ def create_offer(
         else:
             db.add(Offer(seller_id=user.id, amount_mwh=amount, price_tinybar=price))
             db.commit()
-            flash(request, "success", f"Listed {format_vkwh(amount)} VKWH for {format_hbar(price)} HBAR.")
+            flash(request, "success", f"Listed {format_vkwh(amount)} VKWH at {format_hbar(unit_tinybar)} HBAR/kWh. "
+                                      f"You'll receive {format_hbar(price)} HBAR when it sells.")
     return RedirectResponse("/market", status_code=303)
 
 
@@ -959,6 +987,8 @@ def impact_stats(db: Session) -> dict:
         .where(Reading.created_at >= day_ago, Reading.meter_id.in_(select(Meter.meter_id)))
     ).one()
     trades = db.exec(select(func.count(Offer.id)).where(Offer.status == FILLED)).one()
+    redeemed_count, redeemed_mwh = db.exec(
+        select(func.count(Redemption.id), func.coalesce(func.sum(Redemption.amount_mwh), 0))).one()
     latest = db.exec(select(Reading).where(Reading.hcs_tx.is_not(None)).order_by(Reading.id.desc()).limit(8)).all()
     kwh = accepted_mwh / 1_000_000
     diesel_l = kwh * DIESEL_L_PER_KWH
@@ -967,6 +997,7 @@ def impact_stats(db: Session) -> dict:
         "rejected_count": sum(rejections.values()), "rejections": rejections,
         "anchored_count": anchored, "meters_count": db.exec(select(func.count(Meter.id))).one(),
         "active_meters": active_meters, "trades_count": trades, "latest_proofs": latest,
+        "redeemed_count": redeemed_count, "redeemed_mwh": redeemed_mwh,
         "diesel_l": diesel_l, "co2_kg": diesel_l * CO2_KG_PER_L,
         "diesel_factor": DIESEL_L_PER_KWH, "co2_factor": CO2_KG_PER_L,
     }
@@ -976,3 +1007,141 @@ def impact_stats(db: Session) -> dict:
 def impact_page(request: Request, db: DbSession, user: CurrentUser):
     """Public: no login needed."""
     return templates.TemplateResponse(request, "impact.html", {"user": user, **impact_stats(db)})
+
+
+# --- Rewards: redeem VKWH for airtime / data (Phase 6b) ----------------------------
+
+# Demo rates, far more generous than real energy value (a 10 W panel makes ~0.05 kWh a day).
+REWARDS = [
+    {"code": "AIRTIME_100", "kind": "Airtime", "label": "₦100 airtime", "mwh": 500},
+    {"code": "AIRTIME_200", "kind": "Airtime", "label": "₦200 airtime", "mwh": 1_000},
+    {"code": "AIRTIME_500", "kind": "Airtime", "label": "₦500 airtime", "mwh": 2_500},
+    {"code": "DATA_100MB", "kind": "Data", "label": "100 MB data", "mwh": 400},
+    {"code": "DATA_500MB", "kind": "Data", "label": "500 MB data", "mwh": 1_500},
+    {"code": "DATA_1GB", "kind": "Data", "label": "1 GB data", "mwh": 2_800},
+]
+REWARDS_BY_CODE = {r["code"]: r for r in REWARDS}
+NETWORKS = ("MTN", "Airtel", "Glo", "9mobile")
+
+
+def normalize_phone(text: str) -> str | None:
+    """Nigerian mobile number -> '+234XXXXXXXXXX', or None if it isn't one.
+    Accepts 0803..., 234803..., +234 803 ... (spaces and dashes ignored)."""
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) == 11 and digits.startswith("0") and digits[1] in "789":
+        return "+234" + digits[1:]
+    if len(digits) == 13 and digits.startswith("234") and digits[3] in "789":
+        return "+" + digits
+    return None
+
+
+def mask_phone(phone: str) -> str:
+    """'+2348031234567' -> '+234******4567'. Only this masked form is ever stored."""
+    return phone[:4] + "*" * (len(phone) - 8) + phone[-4:]
+
+
+def voucher_code() -> str:
+    """A demo voucher like 'VD-7K2Q-9MXA' (no 0/O/1/I to avoid confusion)."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    part = lambda: "".join(secrets.choice(alphabet) for _ in range(4))  # noqa: E731
+    return f"VD-{part()}-{part()}"
+
+
+def redemption_message(r: Redemption, account_id: str) -> str:
+    """The `redemptions` HCS message. No phone number, not even masked: HCS is public forever."""
+    return json.dumps(
+        {"t": "redeem", "v": 1, "id": r.id, "account": account_id, "item": r.item_code,
+         "vkwh": format_vkwh(r.amount_mwh), "network": r.network, "transferTx": r.transfer_tx,
+         "burnTx": r.burn_tx, "delivery": "demo"},
+        separators=(",", ":"),
+    )
+
+
+def rewards_context(db: Session, user: User) -> dict:
+    balances = hedera.get_balances(user.account_id)
+    listed = listed_mwh(db, user)
+    available = max(balances["vkwh_mwh"] - listed, 0) if balances else None
+    history = db.exec(select(Redemption).where(Redemption.user_id == user.id)
+                      .order_by(Redemption.id.desc()).limit(20)).all()
+    return {"user": user, "rewards": REWARDS, "networks": NETWORKS, "available_mwh": available,
+            "listed_mwh": listed, "history": history,
+            "redeemed_mwh": sum(r.amount_mwh for r in history)}
+
+
+@app.get("/rewards", response_class=HTMLResponse)
+def rewards_page(request: Request, db: DbSession, user: CurrentUser):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    context = rewards_context(db, user)
+    context["flash"] = request.session.pop("flash", None)
+    return templates.TemplateResponse(request, "rewards.html", context)
+
+
+@app.post("/rewards/redeem")
+def redeem(
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    item: Annotated[str, Form()],
+    network: Annotated[str, Form()],
+    phone: Annotated[str, Form()],
+):
+    """Spend VKWH on a reward: VKWH -> treasury -> burned (real, on Hedera), then a
+    demo voucher. Recorded on the `redemptions` topic."""
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    reward = REWARDS_BY_CODE.get(item)
+    full_phone = normalize_phone(phone)
+
+    def fail(message: str) -> RedirectResponse:
+        flash(request, "error", message)
+        return RedirectResponse("/rewards", status_code=303)
+
+    if reward is None:
+        return fail("Pick a reward from the list.")
+    if network not in NETWORKS:
+        return fail("Pick your mobile network.")
+    if full_phone is None:
+        return fail("Enter a Nigerian mobile number, e.g. 0803 123 4567.")
+    try:
+        token_id = hedera.config_id("VKWH_TOKEN_ID")
+        topic_id = hedera.config_id("REDEMPTIONS_TOPIC_ID")
+    except hedera.HederaError as exc:
+        return fail(f"Rewards aren't set up yet: {exc}")
+    balances = hedera.get_balances(user.account_id)
+    if balances is None:
+        return fail("Couldn't check your VKWH balance on Hedera right now. Try again in a moment.")
+    available = balances["vkwh_mwh"] - listed_mwh(db, user)
+    if reward["mwh"] > available:
+        return fail(f"{reward['label']} costs {format_vkwh(reward['mwh'])} VKWH; you have "
+                    f"{format_vkwh(max(available, 0))} VKWH available (balance minus what you've listed for sale).")
+
+    # 1. The user's VKWH goes back to the treasury. If this fails, nothing moved.
+    try:
+        transfer_tx = hedera.return_to_treasury(token_id, user.account_id, decrypt_key(user.encrypted_key), reward["mwh"])
+    except hedera.HederaError as exc:
+        return fail(f"The redemption didn't go through, and nothing moved. {exc}")
+    # 2. Burn it, so it can never be spent again.
+    try:
+        burn_tx = hedera.burn_vkwh(token_id, reward["mwh"])
+    except hedera.HederaError:
+        burn_tx = None   # the VKWH is in the treasury; the burn can be retried
+    row = Redemption(user_id=user.id, item_code=reward["code"], item_label=reward["label"],
+                     amount_mwh=reward["mwh"], network=network, phone_masked=mask_phone(full_phone),
+                     voucher_code=voucher_code(), status="completed" if burn_tx else "burn_pending",
+                     transfer_tx=transfer_tx, burn_tx=burn_tx)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    # 3. Public record (best effort; the transfer and burn are already final on Hedera).
+    try:
+        row.hcs_tx = hedera.submit_message(topic_id, redemption_message(row, user.account_id))
+        db.add(row)
+        db.commit()
+    except hedera.HederaError:
+        pass
+    flash(request, "success",
+          f"Redeemed {format_vkwh(reward['mwh'])} VKWH for {reward['label']} ({network}, {row.phone_masked}). "
+          f"Demo voucher {row.voucher_code}. The VKWH was returned and burned on Hedera.",
+          hedera.hashscan_tx(burn_tx or transfer_tx))
+    return RedirectResponse("/rewards", status_code=303)

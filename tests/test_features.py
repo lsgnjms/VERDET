@@ -168,30 +168,62 @@ def test_checklist_progress_and_disappears_when_done(client, engine):
 
 # --- Price band and history ----------------------------------------------------------------------------
 
-def list_offer(client, fake_hedera, amount, price) -> str:
+def list_offer(client, fake_hedera, amount, per_kwh) -> str:
     fake_hedera.balances = {"hbar_tinybar": 10**9, "vkwh_mwh": 1_000_000}
-    return page(client.post("/offers", data={"amount_vkwh": amount, "price_hbar": price}))
+    return page(client.post("/offers", data={"amount_vkwh": amount, "price_per_kwh": per_kwh}))
+
+
+def offers_in(engine) -> list[Offer]:
+    with Session(engine) as session:
+        return list(session.exec(select(Offer)))
 
 
 def test_price_band_refuses_too_expensive(client, engine, fake_hedera):
     signup(client)
-    html = list_offer(client, fake_hedera, "0.00001", "1000")      # 100,000,000 HBAR/kWh
+    html = list_offer(client, fake_hedera, "0.001", "1000")
     assert "Price must be between 1 and 50 HBAR per kWh" in html
-    with Session(engine) as session:
-        assert session.exec(select(Offer)).all() == []
+    assert offers_in(engine) == []
 
 
 def test_price_band_refuses_too_cheap(client, fake_hedera):
     signup(client)
-    assert "Price must be between" in list_offer(client, fake_hedera, "1", "0.5")   # 0.5 HBAR/kWh
+    assert "Price must be between" in list_offer(client, fake_hedera, "1", "0.5")
 
 
 def test_price_band_accepts_the_edges(client, engine, fake_hedera):
     signup(client)
-    list_offer(client, fake_hedera, "0.1", "0.1")      # exactly 1 HBAR/kWh
-    list_offer(client, fake_hedera, "0.1", "5")        # exactly 50 HBAR/kWh
-    with Session(engine) as session:
-        assert len(session.exec(select(Offer)).all()) == 2
+    list_offer(client, fake_hedera, "0.1", "1")
+    list_offer(client, fake_hedera, "0.1", "50")
+    assert [o.price_tinybar for o in offers_in(engine)] == [10_000_000, 500_000_000]   # 0.1 and 5 HBAR
+
+
+def test_total_is_computed_from_price_per_kwh(client, engine, fake_hedera):
+    """The user's example: 0.0004 VKWH at 10 HBAR/kWh = 0.004 HBAR, no guessing."""
+    signup(client)
+    html = list_offer(client, fake_hedera, "0.0004", "10")
+    assert "You'll receive 0.004 HBAR" in html
+    [offer] = offers_in(engine)
+    assert (offer.amount_mwh, offer.price_tinybar) == (400, 400_000)
+
+
+def test_minimum_offer_size(client, engine, fake_hedera):
+    signup(client)
+    assert "The smallest offer is 0.000100 VKWH" in list_offer(client, fake_hedera, "0.00005", "10")
+    assert offers_in(engine) == []
+
+
+def test_sell_form_is_prefilled_with_the_reference_price(client):
+    signup(client)
+    html = page(client.get("/market"))
+    assert 'name="price_per_kwh"' in html and 'value="10"' in html
+    assert 'name="price_hbar"' not in html
+
+
+def test_suggested_price_follows_the_last_trade_inside_the_band(client, engine):
+    signup(client)
+    add(engine, User(email="b@x.y", password_hash="x", account_id="0.0.2", encrypted_key="x"),
+        Offer(seller_id=2, buyer_id=1, amount_mwh=100_000, price_tinybar=12 * 10**7, status="filled", tx_id=TX))
+    assert 'value="12.00"' in page(client.get("/market"))                 # 1.2 HBAR for 0.1 VKWH
 
 
 def test_market_shows_band_and_price_history(client, engine):
@@ -199,7 +231,7 @@ def test_market_shows_band_and_price_history(client, engine):
     add(engine, User(email="b@x.y", password_hash="x", account_id="0.0.2", encrypted_key="x"),
         Offer(seller_id=2, buyer_id=1, amount_mwh=100_000, price_tinybar=10 * 10**8, status="filled", tx_id=TX))
     html = page(client.get("/market"))
-    assert "1 – 50 HBAR/kWh" in html
+    assert "allowed range" in html
     assert '"p": 100.0' in html and 'id="price-chart"' in html     # 10 HBAR for 0.1 VKWH = 100 HBAR/kWh
 
 

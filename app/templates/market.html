@@ -94,9 +94,10 @@
       <label class="block">
         <span class="label">Amount</span>
         <div class="relative mt-1.5">
-          <input id="sell-amount" name="amount_vkwh" required inputmode="decimal" placeholder="0.001" class="input num pr-16">
+          <input id="sell-amount" name="amount_vkwh" required inputmode="decimal" placeholder="0.0004" class="input num pr-16">
           <span class="absolute inset-y-0 right-3 flex items-center text-xs text-muted">VKWH</span>
         </div>
+        <span id="sell-energy" class="mt-1 block text-[11px] text-muted">Minimum {{ min_offer_mwh | vkwh }} VKWH ({{ min_offer_mwh | energy }})</span>
       </label>
       <div class="grid grid-cols-4 gap-1.5">
         {% for pct in [25, 50, 75, 100] %}
@@ -105,20 +106,27 @@
         {% endfor %}
       </div>
       <label class="block">
-        <span class="label">Total price</span>
+        <span class="flex items-center justify-between">
+          <span class="label">Price per kWh</span>
+          <span class="text-[11px] text-muted">Suggested <span class="num text-fg">{{ suggested }}</span></span>
+        </span>
         <div class="relative mt-1.5">
-          <input id="sell-price" name="price_hbar" required inputmode="decimal" placeholder="2" class="input num pr-16">
-          <span class="absolute inset-y-0 right-3 flex items-center text-xs text-muted">HBAR</span>
+          <input id="sell-unit-price" name="price_per_kwh" required inputmode="decimal" value="{{ suggested }}" class="input num pr-24">
+          <span class="absolute inset-y-0 right-3 flex items-center text-xs text-muted">HBAR/kWh</span>
         </div>
       </label>
-      <div class="rounded-lg bg-ink-900 px-3 py-2 text-xs">
+      <input id="sell-slider" type="range" min="{{ band.min }}" max="{{ band.max }}" step="0.01" value="{{ suggested }}"
+             oninput="market.fromSlider(this.value)" class="w-full accent-[#F7A600]">
+      <div class="flex justify-between text-[10px] text-muted num"><span>{{ band.min }}</span><span>allowed range</span><span>{{ band.max }}</span></div>
+      <div class="grid grid-cols-3 gap-1.5">
+        <button type="button" onclick="market.nudge(0)" class="rounded-md border border-ink-700 py-1 text-xs text-muted transition hover:border-sun-500/50 hover:text-sun-400">Market</button>
+        <button type="button" onclick="market.nudge(-5)" class="rounded-md border border-ink-700 py-1 text-xs text-muted transition hover:border-sun-500/50 hover:text-sun-400">−5%</button>
+        <button type="button" onclick="market.nudge(5)" class="rounded-md border border-ink-700 py-1 text-xs text-muted transition hover:border-sun-500/50 hover:text-sun-400">+5%</button>
+      </div>
+      <div class="rounded-lg bg-ink-900 px-3 py-2.5 text-xs">
         <div class="flex items-center justify-between">
-          <span class="text-muted">Price per kWh</span>
-          <span id="sell-unit" class="num text-fg">—</span>
-        </div>
-        <div class="mt-1 flex items-center justify-between text-[11px]">
-          <span class="text-muted">Allowed range</span>
-          <span class="num text-muted">{{ band.min }} – {{ band.max }} HBAR/kWh</span>
+          <span class="text-muted">You receive</span>
+          <span id="sell-total" class="num text-base font-semibold text-fg">—</span>
         </div>
         <p id="sell-band-msg" class="mt-1 hidden text-[11px] text-down">Outside the allowed price range.</p>
       </div>
@@ -234,17 +242,33 @@
       this.preview();
     },
     band: { min: {{ band.min | float }}, max: {{ band.max | float }} },
+    suggested: {{ suggested | float }},
+    unitPrice() { return parseFloat(document.getElementById("sell-unit-price").value); },
+    setPrice(v) {
+      v = Math.round(v * 100) / 100;
+      document.getElementById("sell-unit-price").value = v;
+      document.getElementById("sell-slider").value = v;
+      this.preview();
+    },
+    fromSlider(v) { document.getElementById("sell-unit-price").value = v; this.preview(); },
+    nudge(pct) { this.setPrice(pct === 0 ? this.suggested : (this.unitPrice() || this.suggested) * (1 + pct / 100)); },
     preview() {
       const a = parseFloat(document.getElementById("sell-amount").value);
-      const p = parseFloat(document.getElementById("sell-price").value);
-      const unitEl = document.getElementById("sell-unit");
+      const unit = this.unitPrice();
+      const totalEl = document.getElementById("sell-total");
       const msg = document.getElementById("sell-band-msg");
-      if (!(a > 0 && p > 0)) { unitEl.textContent = "—"; unitEl.className = "num text-fg"; msg.classList.add("hidden"); return; }
-      const unit = p / a;
-      const ok = unit >= this.band.min && unit <= this.band.max;
-      unitEl.textContent = unit.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " HBAR";
-      unitEl.className = "num " + (ok ? "text-up" : "text-down");
-      msg.classList.toggle("hidden", ok);
+      const energy = document.getElementById("sell-energy");
+      if (a > 0) {
+        const mwh = a * 1e6;
+        energy.textContent = "= " + (mwh < 1000 ? mwh.toFixed(0) + " mWh" : (mwh / 1000).toFixed(2) + " Wh") + " of verified energy";
+      }
+      const inBand = unit >= this.band.min && unit <= this.band.max;
+      msg.classList.toggle("hidden", !(unit > 0) || inBand);
+      if (a > 0 && unit > 0) {
+        const total = Math.floor(Math.round(a * 1e6) * Math.round(unit * 1e8) / 1e6) / 1e8;
+        totalEl.textContent = total.toLocaleString(undefined, { maximumFractionDigits: 8 }) + " HBAR";
+        totalEl.className = "num text-base font-semibold " + (inBand ? "text-up" : "text-down");
+      } else { totalEl.textContent = "—"; totalEl.className = "num text-base font-semibold text-fg"; }
     },
     confirmBuy(id, amount, price, unit, seller) {
       document.getElementById("buy-form").action = "/offers/" + id + "/buy";

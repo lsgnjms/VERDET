@@ -5,7 +5,7 @@ Read this first in every session. The full plan is in `Plan.md`. This file holds
 ## Project
 **VERDET** (VERifiable Decentralized Energy Trading): a hackathon prototype for the IEEE ClimateChain Global Hackathon, Track: Renewable Energy & Energy Trading. Deadline: Oct 25, 2026, 3:00 pm Lagos.
 
-Flow: Arduino Mega meter measures solar output and **signs** each reading window → PC gateway relays → FastAPI app verifies (identity, signature, replay, duplicate, physics, AI) → every decision is recorded on a Hedera HCS topic → accepted energy mints VKWH (HTS token) to the owner → users trade VKWH for HBAR on a fixed-price marketplace (one atomic transaction) → public impact page.
+Flow: Arduino Mega meter measures solar output and **signs** each reading window → PC gateway relays → FastAPI app verifies (identity, signature, replay, duplicate, physics, AI) → every decision is recorded on a Hedera HCS topic → accepted energy mints VKWH (HTS token) to the owner → users trade VKWH for HBAR on a fixed-price marketplace (one atomic transaction) or redeem it for airtime/data (demo vouchers; the VKWH is really returned and burned on Hedera) → public impact page.
 
 Precedent: GreenAfrica (2025 Hedera Africa Hackathon winner). Keep the build that simple.
 
@@ -88,3 +88,6 @@ python gateway/serial_bridge.py --port COM3   # real meter
 - Routes are plain `def` (the SDK is synchronous). No migrations: `create_all()` at startup; delete `verdet.db` to reset locally.
 - Postgres driver `psycopg[binary]` is added in Phase 7, not before.
 - Branch: `main`. Commit at every passing checkpoint.
+- Marketplace (Oct 19): sellers enter **price per kWh**; the total is computed. Price band `PRICE_MIN/MAX_HBAR_PER_KWH` in `.env`.
+- Redemption (Oct 19): VKWH → treasury → burned, recorded on the `redemptions` topic (`REDEMPTIONS_TOPIC_ID`); phone numbers are masked in HCS messages; airtime/data delivery is a labelled demo voucher. Never claim real airtime was sent.
+- Phase 5 is the minimal version (pvlib clear-sky only, no scikit-learn model).

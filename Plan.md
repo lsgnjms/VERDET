@@ -232,13 +232,14 @@ Don't start the next phase until the current checkpoint passes.
 ### Phase 5 — AI verification (Day 6, 4 h)
 **Goal:** An AI check catches plausible fakes that the rules miss, and the app keeps working if the check fails.
 
-- [ ] `ai.py`: pvlib clear-sky expected energy for the meter's location, window and rating
-- [ ] IsolationForest trained on simulated normal windows (features: ratio to clear-sky, ramp rate, peak/average, deviation from the meter's own history); save the model with joblib
+**Scope cut (Oct 19, R13 fallback): minimal version only.** No IsolationForest / scikit-learn model.
+- [ ] `ai.py`: pvlib clear-sky expected energy for the meter's location, window and rating; flag energy well above what the sky allows → `AI_ANOMALY`
 - [ ] Wire it into the pipeline after the physics checks; if it errors → rules-only, logged as `AI_UNAVAILABLE`
-- [ ] Simulator flag `--lamp` (steady, plausible-looking but inconsistent output)
-- [ ] `tests/test_ai.py`: normal accepted; spike and lamp flagged
+- [ ] Simulator flag `--lamp` (steady output when the sky can't provide it)
+- [ ] `tests/test_ai.py`: normal accepted; lamp flagged
+- [ ] Open decision: the check rejects evening bench tests (clear sky = 0 at night). Proposed `.env` switch to disable it for bench testing. Label the step honestly in the UI ("Solar model", not "AI")
 
-**Deliverables:** `app/ai.py`, saved model, tests, `AI_ANOMALY` decisions on HCS
+**Deliverables:** `app/ai.py`, tests, `AI_ANOMALY` decisions on HCS
 **Checkpoint:** `pytest tests/test_ai.py` passes. `--lamp` → `AI_ANOMALY` in the app and on HCS, and normal data is still accepted.
 **Effort:** 4 h
 
@@ -256,6 +257,19 @@ Don't start the next phase until the current checkpoint passes.
 **Deliverables:** marketplace page, `POST /offers`, `POST /offers/{id}/buy`, `POST /offers/{id}/cancel`
 **Checkpoint:** User A lists 0.5 VKWH for 2 HBAR and User B buys it. **One** transaction on HashScan shows both legs, both balances update, and the offer shows `filled`. A second buy attempt fails with a clear message.
 **Effort:** 4 h
+
+---
+
+### Phase 6b — Price per kWh + redeem VKWH for airtime/data (added Oct 19)
+**Goal:** sellers price intuitively, and VKWH can be spent on everyday rewards (GreenAfrica-style tokenized incentives), alongside P2P trading.
+
+- [ ] Sell form: amount + **price per kWh** (pre-filled suggested price, Market/±5% buttons, slider within the band); total computed exactly; minimum offer size
+- [ ] Rewards page: catalogue (airtime / data, Nigerian networks) priced in VKWH at **demo rates**
+- [ ] Redeem = user's VKWH → treasury (signed by the user's custodial key) → **burned** (TokenBurn, supply key), recorded on a new `redemptions` HCS topic (phone number masked)
+- [ ] Delivery is a **demo voucher**, clearly labelled "testnet demo: airtime/data not actually delivered" (option A; real sandbox delivery is a §5 idea)
+- [ ] Guards: enough available VKWH (balance minus VKWH listed in offers), valid phone and network
+
+**Checkpoint:** a user redeems an item; HashScan shows the VKWH transfer to the treasury, the burn, and the `redemptions` message; the voucher appears in their history.
 
 ---
 
@@ -334,7 +348,8 @@ Don't start the next phase until the current checkpoint passes.
 - AC metering of inverter output with certified metering chips
 - Solidity claims registry; Guardian policy flow; alignment with a named registry methodology (Gold Standard, Verra, I-REC)
 - Merkle-batched anchoring for thousands of meters per HCS message
-- Redeeming VKWH for airtime, data or electricity credit (GreenAfrica-style)
+- Real airtime/data delivery through a provider API (e.g. Africa's Talking, Reloadly) and electricity-token credit; demo vouchers were built in Phase 6b
+- Isolation-forest anomaly model on top of the clear-sky check (cut from Phase 5 on Oct 19)
 - Mini-grid operator dashboard and community energy pools
 - Generator-runtime sensing to measure diesel displacement directly
 - Night-generation rule (`NIGHT_GENERATION`): reject energy claimed while the sun is down at the meter's location (pvlib solar position). Needs a trusted window time (an RTC on the meter, or Hedera consensus time)

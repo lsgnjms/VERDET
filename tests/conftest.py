@@ -10,6 +10,7 @@ os.environ["REGISTRY_TOPIC_ID"] = "0.0.1001"
 os.environ["READINGS_TOPIC_ID"] = "0.0.1002"
 os.environ["TRADES_TOPIC_ID"] = "0.0.1003"
 os.environ["VKWH_TOKEN_ID"] = "0.0.1004"
+os.environ["REDEMPTIONS_TOPIC_ID"] = "0.0.1005"
 
 import pytest  # noqa: E402
 from cryptography.fernet import Fernet  # noqa: E402
@@ -41,9 +42,24 @@ class FakeHedera:
         self.swaps: list[tuple] = []                    # atomic_swap arguments
         self.swap_error: str | None = None              # set to make atomic_swap fail
         self.hcs_message: dict | None = None            # what get_hcs_message returns
+        self.returns: list[tuple] = []                  # return_to_treasury calls
+        self.burns: list[tuple] = []                    # burn_vkwh calls
+        self.fail_burn = False
 
     def get_hcs_message(self, topic_id: str, tx_id: str) -> dict | None:
         return self.hcs_message
+
+    def return_to_treasury(self, token_id, from_account, from_key, amount_mwh) -> str:
+        if self.fail or self.fail_mint:
+            raise hedera.HederaError("Hedera is slow or unreachable, try again.")
+        self.returns.append((token_id, from_account, from_key, amount_mwh))
+        return self._tx()
+
+    def burn_vkwh(self, token_id, amount_mwh) -> str:
+        if self.fail or self.fail_burn:
+            raise hedera.HederaError("Hedera is slow or unreachable, try again.")
+        self.burns.append((token_id, amount_mwh))
+        return self._tx()
 
     def atomic_swap(self, token_id, seller_id, seller_key, buyer_id, buyer_key, amount_mwh, price_tinybar) -> str:
         if self.fail or self.swap_error:
@@ -101,6 +117,8 @@ def fake_hedera(monkeypatch) -> FakeHedera:
     monkeypatch.setattr(hedera, "reward_vkwh", fake.reward_vkwh)
     monkeypatch.setattr(hedera, "atomic_swap", fake.atomic_swap)
     monkeypatch.setattr(hedera, "get_hcs_message", fake.get_hcs_message)
+    monkeypatch.setattr(hedera, "return_to_treasury", fake.return_to_treasury)
+    monkeypatch.setattr(hedera, "burn_vkwh", fake.burn_vkwh)
 
     def no_network():
         raise AssertionError("A test tried to reach Hedera")

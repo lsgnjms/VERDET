@@ -95,6 +95,7 @@
         <a href="/dashboard" class="nav-link {{ 'active' if active == 'dashboard' }}">{{ ui.icon("home") }}Dashboard</a>
         <a href="/readings" class="nav-link {{ 'active' if active == 'readings' }}">{{ ui.icon("list") }}Readings</a>
         <a href="/market" class="nav-link {{ 'active' if active == 'market' }}">{{ ui.icon("swap") }}Market</a>
+        <a href="/rewards" class="nav-link {{ 'active' if active == 'rewards' }}">{{ ui.icon("gift") }}Rewards</a>
         <a href="/meters" class="nav-link {{ 'active' if active == 'meters' }}">{{ ui.icon("cpu") }}Meter</a>
         <a href="/impact" class="nav-link {{ 'active' if active == 'impact' }}">{{ ui.icon("globe") }}Impact</a>
       </nav>
@@ -125,6 +126,7 @@
             </div>
             <a href="{{ hashscan_account(user.account_id) }}" target="_blank" rel="noopener"
                class="flex items-center gap-2 px-4 py-2.5 text-sm text-muted transition hover:bg-ink-800 hover:text-fg">{{ ui.icon("external") }}View account on HashScan</a>
+            <a href="/impact" class="flex items-center gap-2 px-4 py-2.5 text-sm text-muted transition hover:bg-ink-800 hover:text-fg">{{ ui.icon("globe") }}Network impact</a>
             <form method="post" action="/logout" class="border-t border-ink-700">
               <button class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-down transition hover:bg-down/10">{{ ui.icon("logout") }}Log out</button>
             </form>
@@ -146,7 +148,7 @@
   {% if user %}
   <!-- Phone tab bar -->
   <nav class="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl md:hidden">
-    {% for href, name, label in [("/dashboard", "home", "Home"), ("/readings", "list", "Readings"), ("/market", "swap", "Market"), ("/meters", "cpu", "Meter"), ("/impact", "globe", "Impact")] %}
+    {% for href, name, label in [("/dashboard", "home", "Home"), ("/readings", "list", "Readings"), ("/market", "swap", "Market"), ("/rewards", "gift", "Rewards"), ("/meters", "cpu", "Meter")] %}
     <a href="{{ href }}" class="flex flex-col items-center gap-1 py-2.5 text-[11px] {{ 'text-sun-400' if active == href[1:] or (href == '/dashboard' and active == 'dashboard') else 'text-muted' }}">
       {{ ui.icon(name, "h-5 w-5") }}{{ label }}</a>
     {% endfor %}

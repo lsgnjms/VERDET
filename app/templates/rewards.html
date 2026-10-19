@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% set active = "rewards" %}
+{% block title %}Rewards · VERDET{% endblock %}
+{% block content %}
+<div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Rewards</h1>
+    <p class="mt-1 text-sm text-muted">Spend your VKWH on airtime and data.</p>
+  </div>
+</div>
+
+<div class="mb-5 flex gap-3 rounded-xl border border-sun-500/30 bg-sun-500/10 px-4 py-3 text-sm">
+  {{ ui.icon("shield", "h-5 w-5 shrink-0 text-sun-400") }}
+  <p><span class="font-semibold text-sun-300">Testnet demo.</span>
+    <span class="text-fg/90">The VKWH you spend is really returned and burned on Hedera. Airtime and data are demo vouchers and are not actually sent. Rates are demo rates.</span></p>
+</div>
+
+<!-- Balance strip -->
+<div class="mb-5 grid gap-4 sm:grid-cols-3">
+  <div class="card relative overflow-hidden p-5 sm:col-span-2">
+    <div class="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-sun-500/15 blur-3xl"></div>
+    <div class="relative">
+      <div class="label">Available to spend</div>
+      {% if available_mwh is none %}
+      <div class="mt-1 text-sm text-muted">Balance not available right now.</div>
+      {% else %}
+      <div class="mt-1 flex items-baseline gap-2">
+        <span class="num text-3xl font-semibold">{{ available_mwh | vkwh }}</span><span class="text-sm font-semibold text-sun-400">VKWH</span>
+      </div>
+      <div class="mt-1 text-xs text-muted">= {{ available_mwh | energy }} of verified energy{% if listed_mwh %} · {{ listed_mwh | vkwh }} VKWH is listed for sale{% endif %}</div>
+      {% endif %}
+    </div>
+  </div>
+  {{ ui.stat("Redeemed", (redeemed_mwh | vkwh) ~ " VKWH", (history | length) ~ " reward" ~ ("" if history | length == 1 else "s") ~ " · burned on Hedera", "gift", "proof") }}
+</div>
+
+<!-- Catalogue -->
+{% for kind, icon_name in [("Airtime", "phone"), ("Data", "signal")] %}
+<h2 class="mb-3 mt-6 flex items-center gap-2 font-semibold">{{ ui.icon(icon_name, "h-4 w-4 text-sun-400") }}{{ kind }}</h2>
+<div class="grid grid-cols-2 gap-3 md:grid-cols-3">
+  {% for r in rewards if r.kind == kind %}
+  {% set affordable = available_mwh is not none and available_mwh >= r.mwh %}
+  <div class="card card-hover flex flex-col p-4">
+    <div class="flex items-start justify-between gap-2">
+      <span class="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-sun-500/20 to-proof/10 text-sun-400">{{ ui.icon(icon_name, "h-5 w-5") }}</span>
+      <span class="chip border-ink-600 bg-ink-800 text-muted">{{ kind }}</span>
+    </div>
+    <div class="mt-3 text-base font-semibold">{{ r.label }}</div>
+    <div class="mt-0.5 num text-sm text-sun-400">{{ r.mwh | vkwh }} VKWH</div>
+    <div class="text-[11px] text-muted">= {{ r.mwh | energy }}</div>
+    {% if affordable %}
+    <button type="button" class="btn-primary mt-4 py-1.5 text-xs"
+            onclick="rewards.open('{{ r.code }}', '{{ r.label }}', '{{ r.mwh | vkwh }}')">Redeem</button>
+    {% else %}
+    <button type="button" disabled class="btn mt-4 border border-ink-700 py-1.5 text-xs text-muted">
+      {% if available_mwh is none %}Unavailable{% else %}Need {{ (r.mwh - available_mwh) | vkwh }} more{% endif %}</button>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endfor %}
+
+<!-- History -->
+<section class="card mt-6">
+  <div class="border-b border-ink-700 px-5 py-4"><h2 class="font-semibold">Your redemptions</h2></div>
+  {% if history %}
+  <div class="overflow-x-auto">
+    <table class="w-full min-w-[720px] text-sm">
+      <thead class="border-b border-ink-700/70">
+        <tr>
+          <th class="th">Time (Lagos)</th><th class="th">Reward</th><th class="th">Sent to</th>
+          <th class="th text-right">VKWH</th><th class="th">Demo voucher</th><th class="th">On Hedera</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-ink-700/60">
+        {% for h in history %}
+        <tr class="transition hover:bg-ink-800/50">
+          <td class="td whitespace-nowrap text-xs text-muted">{{ h.created_at | lagos_time }}</td>
+          <td class="td font-medium">{{ h.item_label }}</td>
+          <td class="td num whitespace-nowrap text-xs text-muted">{{ h.network }} · {{ h.phone_masked }}</td>
+          <td class="td num text-right">{{ h.amount_mwh | vkwh }}</td>
+          <td class="td"><span class="num inline-flex items-center gap-1 rounded-md border border-ink-700 bg-ink-900 px-2 py-0.5 text-xs">{{ h.voucher_code }}{{ ui.copy(h.voucher_code) }}</span></td>
+          <td class="td">
+            <div class="flex flex-wrap gap-1.5">
+              {% if h.transfer_tx %}{{ ui.proof(hashscan_tx(h.transfer_tx), "return") }}{% endif %}
+              {% if h.burn_tx %}{{ ui.proof(hashscan_tx(h.burn_tx), "burn") }}{% else %}<span class="text-xs text-sun-400">burn pending</span>{% endif %}
+              {% if h.hcs_tx %}{{ ui.proof(hashscan_tx(h.hcs_tx), "record") }}{% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ ui.empty("No redemptions yet. Earn VKWH with your meter, then spend it here.") }}
+  {% endif %}
+</section>
+
+<!-- Redeem dialog -->
+<dialog id="redeem-dialog" class="w-[min(92vw,28rem)] rounded-2xl border border-ink-700 bg-ink-900 p-0 text-fg backdrop:bg-black/70 backdrop:backdrop-blur-sm">
+  <form method="post" action="/rewards/redeem" class="p-6">
+    <input type="hidden" name="item" id="redeem-item">
+    <h3 class="text-lg font-semibold">Redeem <span id="redeem-label"></span></h3>
+    <p class="mt-1 text-sm text-muted">Costs <span id="redeem-cost" class="num text-sun-400"></span> VKWH.</p>
+
+    <div class="mt-5">
+      <span class="label">Network</span>
+      <div class="mt-1.5 grid grid-cols-4 gap-1.5">
+        {% for n in networks %}
+        <label class="cursor-pointer">
+          <input type="radio" name="network" value="{{ n }}" class="peer sr-only" {{ "checked" if loop.first }}>
+          <span class="block rounded-lg border border-ink-700 py-2 text-center text-xs font-medium text-muted transition peer-checked:border-sun-500 peer-checked:bg-sun-500/10 peer-checked:text-sun-300">{{ n }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <label class="mt-4 block">
+      <span class="label">Phone number</span>
+      <input name="phone" required inputmode="tel" placeholder="0803 123 4567" class="input num mt-1.5">
+    </label>
+    <p class="mt-3 flex gap-2 text-xs text-muted">{{ ui.icon("shield", "h-4 w-4 shrink-0 text-proof") }}Your VKWH goes back to the treasury and is burned on Hedera. Only the last 4 digits of your number are kept, and none of it goes on-chain.</p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="btn-ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button class="btn-primary"
+              onclick="if (this.form.reportValidity()) { this.disabled = true; this.innerHTML = '<span class=&quot;h-4 w-4 animate-spin rounded-full border-2 border-ink-950/30 border-t-ink-950&quot;></span>Burning on Hedera…'; this.form.submit(); }">Redeem now</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const rewards = {
+    open(code, label, cost) {
+      document.getElementById("redeem-item").value = code;
+      document.getElementById("redeem-label").textContent = label;
+      document.getElementById("redeem-cost").textContent = cost;
+      document.getElementById("redeem-dialog").showModal();
+    },
+  };
+</script>
+{% endblock %}

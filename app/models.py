@@ -104,6 +104,27 @@ class Offer(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class Redemption(SQLModel, table=True):
+    """VKWH spent on a reward (airtime/data). The VKWH really goes back to the treasury
+    and is burned on Hedera; the airtime/data voucher itself is a demo."""
+
+    __tablename__ = "redemptions"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    item_code: str                                      # e.g. "AIRTIME_100"
+    item_label: str                                     # e.g. "₦100 airtime"
+    amount_mwh: int
+    network: str                                        # MTN / Airtel / Glo / 9mobile
+    phone_masked: str                                   # only the last 4 digits are kept
+    voucher_code: str                                   # demo voucher
+    status: str = "completed"                           # completed / burn_pending
+    transfer_tx: str | None = None                      # user -> treasury
+    burn_tx: str | None = None                          # treasury burn
+    hcs_tx: str | None = None                           # redemptions topic record
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 # --- Connection -------------------------------------------------------------
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./verdet.db")

@@ -46,6 +46,9 @@
   {{ ui.stat("Active meters", active_meters, "reported in the last 24 h · " ~ meters_count ~ " registered", "cpu", "sun") }}
   {{ ui.stat("Trades settled", trades_count, "one atomic transaction each", "swap", "up") }}
 </div>
+<div class="mt-4">
+  {{ ui.stat("Rewards redeemed", redeemed_count, (redeemed_mwh | vkwh) ~ " VKWH spent on airtime and data, burned on Hedera", "gift", "sun") }}
+</div>
 
 <div class="mt-4 grid gap-4 lg:grid-cols-5">
   <!-- Formula + rejections -->

@@ -1,7 +1,8 @@
-"""One-time setup: create VERDET's HCS topics and the VKWH token on testnet.
+"""Setup: create VERDET's HCS topics and the VKWH token on testnet, if missing.
 
-Prints KEY=value lines to paste into .env. It never edits .env itself, and it
-refuses to run if VKWH_TOKEN_ID is already set (so it can't create duplicates).
+Only creates what .env doesn't have yet, so it's safe to run again (e.g. to add the
+`redemptions` topic later without making a second token). Prints KEY=value lines to
+paste into .env; it never edits .env itself.
 
 Run: .venv\\Scripts\\python.exe scripts\\setup_hedera.py
 """
@@ -18,27 +19,32 @@ TOPICS = [
     ("REGISTRY_TOPIC_ID", "VERDET registry"),
     ("READINGS_TOPIC_ID", "VERDET readings"),
     ("TRADES_TOPIC_ID", "VERDET trades"),
+    ("REDEMPTIONS_TOPIC_ID", "VERDET redemptions"),
 ]
 
 
-def main() -> None:
-    if os.getenv("VKWH_TOKEN_ID", "").strip():
-        sys.exit(
-            "VKWH_TOKEN_ID is already set in .env, so setup has already run.\n"
-            "To start over, clear the four ID lines in .env first."
-        )
+def missing(env_name: str) -> bool:
+    return not os.getenv(env_name, "").strip()
 
-    print(f"Operator {h.operator_id()} on testnet. Creating topics and token...\n")
-    lines = []
-    links = []
+
+def main() -> None:
+    todo_topics = [(name, memo) for name, memo in TOPICS if missing(name)]
+    todo_token = missing("VKWH_TOKEN_ID")
+    if not todo_topics and not todo_token:
+        print("Everything is already set up in .env. Nothing to do.")
+        return
+
+    print(f"Operator {h.operator_id()} on testnet. Creating what's missing...\n")
+    lines, links = [], []
     try:
-        for env_name, memo in TOPICS:
+        for env_name, memo in todo_topics:
             topic_id = h.create_topic(memo)
             lines.append(f"{env_name}={topic_id}")
             links.append(h.hashscan_topic(topic_id))
-        token_id = h.create_vkwh_token()
-        lines.append(f"VKWH_TOKEN_ID={token_id}")
-        links.append(h.hashscan_token(token_id))
+        if todo_token:
+            token_id = h.create_vkwh_token()
+            lines.append(f"VKWH_TOKEN_ID={token_id}")
+            links.append(h.hashscan_token(token_id))
     finally:
         # Print whatever was created, even if a later step failed.
         if lines:

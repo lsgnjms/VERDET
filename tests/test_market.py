@@ -43,8 +43,9 @@ class Page:
         self.text = html_lib.unescape(resp.text)
 
 
-def list_offer(client, amount="0.5", price="2") -> Page:
-    return Page(client.post("/offers", data={"amount_vkwh": amount, "price_hbar": price}, follow_redirects=True))
+def list_offer(client, amount="0.5", price="4") -> Page:
+    """price is HBAR per kWh: 0.5 VKWH at 4 HBAR/kWh = 2 HBAR total."""
+    return Page(client.post("/offers", data={"amount_vkwh": amount, "price_per_kwh": price}, follow_redirects=True))
 
 
 def act(client, offer_id: int, action: str) -> str:
@@ -70,14 +71,14 @@ def test_parse_units_rejects_bad_input(text):
 
 def test_market_requires_login(client):
     assert client.get("/market", follow_redirects=False).headers["location"] == "/login"
-    resp = client.post("/offers", data={"amount_vkwh": "1", "price_hbar": "1"}, follow_redirects=False)
+    resp = client.post("/offers", data={"amount_vkwh": "1", "price_per_kwh": "10"}, follow_redirects=False)
     assert resp.headers["location"] == "/login"
 
 
 def test_list_offer(market, engine):
     seller, _ = market
     html = list_offer(seller).text
-    assert "Listed 0.500000 VKWH for 2.00 HBAR" in html
+    assert "Listed 0.500000 VKWH at 4.00 HBAR/kWh. You'll receive 2.00 HBAR" in html
     [offer] = offers(engine)
     assert (offer.amount_mwh, offer.price_tinybar, offer.status) == (500_000, 200_000_000, "open")
 
@@ -98,7 +99,7 @@ def test_cannot_list_the_same_energy_twice(market, engine):
 def test_bad_amounts_rejected(market, engine):
     seller, _ = market
     assert "Amount must be" in list_offer(seller, amount="-1").text
-    assert "Price must be" in list_offer(seller, price="abc").text
+    assert "Price per kWh must be" in list_offer(seller, price="abc").text
     assert offers(engine) == []
 
 

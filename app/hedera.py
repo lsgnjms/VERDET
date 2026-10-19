@@ -20,6 +20,7 @@ from hiero_sdk_python import (
     PrivateKey,
     ResponseCode,
     SupplyType,
+    TokenBurnTransaction,
     TokenCreateTransaction,
     TokenId,
     TokenMintTransaction,
@@ -209,6 +210,25 @@ def reward_vkwh(token_id: str, to_account: str, amount_mwh: int) -> str:
         .add_token_transfer(token, operator_id(), -amount_mwh)
         .add_token_transfer(token, AccountId.from_string(to_account), amount_mwh)
     )
+    return _tx_str(_run(tx, operator_key()).transaction_id)
+
+
+def return_to_treasury(token_id: str, from_account: str, from_key: str, amount_mwh: int) -> str:
+    """Move a user's VKWH back to the treasury (signed by the user's custodial key,
+    DER hex). First half of a redemption. Returns the transaction ID."""
+    token = TokenId.from_string(token_id)
+    tx = (
+        TransferTransaction()
+        .add_token_transfer(token, AccountId.from_string(from_account), -amount_mwh)
+        .add_token_transfer(token, operator_id(), amount_mwh)
+    )
+    return _tx_str(_run(tx, key_from_string(from_key)).transaction_id)
+
+
+def burn_vkwh(token_id: str, amount_mwh: int) -> str:
+    """Burn VKWH held by the treasury (supply key = operator), so redeemed energy
+    can never be spent again. Returns the transaction ID."""
+    tx = TokenBurnTransaction().set_token_id(TokenId.from_string(token_id)).set_amount(amount_mwh)
     return _tx_str(_run(tx, operator_key()).transaction_id)
 
 
