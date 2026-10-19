@@ -231,3 +231,24 @@ def test_spike_reading_is_physics_limit_and_advances_seq():
 def test_sequence_is_checked_before_physics():
     d = verify_reading(make_signed(seq=3, peakMw=30000, mWh=450), make_meter(last_seq=5))
     assert d.reasons == [REPLAY]
+
+
+# --- Golden vector from the real Arduino Mega (firmware/spike, Oct 19) ------------
+
+MEGA_PUB = "25324AF935957C5541E320C9AC0A691FC7042F197ABB65C27BE12805DA2931B9"
+MEGA_SIG = ("E19D2EB0CA46E57114F83F9EAD8F5F5075F85AECF03A5159F68BCDFE27A9A57F"
+            "0A012B2D6B046E76EE3A0541D34B1BB9B48D1CAF740E59D993B6F5EBBA559105")
+
+
+def test_real_mega_signature_verifies_through_the_app():
+    """The Mega signed SPIKE_MSG with rweather Crypto; the app's own code must accept it."""
+    reading = {"meterId": "VD-0001", "seq": 1, "tStartMs": 0, "tEndMs": 60000,
+               "mWh": 167, "peakMw": 10120, "avgMv": 18000, "avgMa": 560, "sig": MEGA_SIG}
+    meter = Meter(meter_id="VD-0001", owner_id=1, pubkey_hex=MEGA_PUB.lower(),
+                  rated_w=10, lat=6.52, lon=3.38, last_seq=0)
+    assert canonical_string(reading) == SPIKE_MSG
+    assert verify_reading(reading, meter).accepted
+
+
+def test_real_mega_signature_fails_if_tampered():
+    assert not signature_valid(MEGA_PUB, SPIKE_MSG.replace("|167|", "|168|"), MEGA_SIG)

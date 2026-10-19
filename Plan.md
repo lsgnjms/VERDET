@@ -213,8 +213,8 @@ Don't start the next phase until the current checkpoint passes.
 ### Phase 4 — The real meter (Day 5, 4 h)
 **Goal:** The Arduino Mega replaces the simulator and real, signed measurements flow end to end.
 
-- [ ] Circuit: voltage divider across the source, low-side shunt in series with the load, common ground (any low-voltage DC source + resistor works for bring-up until the panel is known)
-- [ ] Firmware: sample once per second, use the internal 1.1 V reference for the shunt channel, accumulate mWh, keep `seq` and the key in EEPROM, sign per window, print JSON lines
+- [ ] Circuit (updated Oct 19 for the parts available): 47 kΩ/10 kΩ voltage divider on A0, ACS712-20A current sensor on A1 in series with the load, 12 V fan + 20–22 Ω 10 W resistor as the load, LM2596 buck on the panel, common ground
+- [ ] Firmware: 1 kHz timer-interrupt sampling (so signing, about 6.3 s, doesn't pause measurement), 1-second averages, accumulate mWh, keep `seq` and the key in EEPROM, sign per window, print JSON lines
 - [ ] Calibrate V and I against a multimeter and store the constants in firmware
 - [ ] `gateway/serial_bridge.py`: read serial lines → POST to `/api/readings`
 - [ ] Register the real meter using the pubkey printed on first boot
@@ -264,11 +264,12 @@ Don't start the next phase until the current checkpoint passes.
 
 - [ ] Live power chart (Chart.js, refreshed every 5 s) and today's verified kWh on the dashboard
 - [ ] Public `/impact` page: total verified kWh, diesel litres displaced and CO₂ avoided (cited, configurable factors with the formula shown), active meters, latest HCS proofs
+- [ ] Public landing page at `/` (added Oct 19): hero, how it works in 4 steps, live impact numbers, sign-up button. UI refresh per `docs/ui-plan.md`
 - [ ] `manifest.json`, icons and `sw.js` (caches the app shell) → installable on a phone
 - [ ] Deploy to Render with Postgres on Neon; set environment variables; point the gateway at production
 - [ ] Mobile layout pass
 
-**Deliverables:** dashboard, `/impact`, PWA files, live URL
+**Deliverables:** dashboard, `/impact`, landing page, PWA files, live URL
 **Checkpoint:** The production URL installs as an app on your phone. The bridge running against production moves the chart on the phone, and `/impact` loads logged-out with working HashScan links.
 **Effort:** 4 h
 

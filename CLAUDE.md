@@ -65,7 +65,7 @@ python gateway/serial_bridge.py --port COM3   # real meter
 9. **The marketplace buy is one atomic `TransferTransaction`** (VKWH and HBAR legs, both signatures). If the SDK can't do this, stop and ask; don't silently use two transfers.
 10. **Honest claims only.** No "trustless", no "carbon credits", no "real energy delivery" in the UI, docs or comments. Say "verified-energy reward token" and "trust-minimized and auditable".
 11. **Stay in scope.** If something isn't in `Plan.md`, ask before building it. Suggest it for §5 (future ideas) instead.
-12. **Finish phases in order.** A phase is done only when its checkpoint in `Plan.md` passes. Exception: the Mega signing spike is split off from Phase 0. The Hedera half of Phase 0 gates Phase 1; the Mega signing check gates **Phase 4 only** (the board arrives around Oct 14). Until then the simulator signs with PyNaCl using the same canonical string.
+12. **Finish phases in order.** A phase is done only when its checkpoint in `Plan.md` passes. Exception: the Mega signing spike is split off from Phase 0. The Hedera half of Phase 0 gates Phase 1; the Mega signing check gates **Phase 4 only** (the board arrives around Oct 14). Until then the simulator signs with PyNaCl using the same canonical string. Exception 2 (Oct 19): the spike passed, but Phase 4's hardware checkpoint waits for parts, so Phases 6 → 7 → 5 may be built before it passes. Phase 4 closes when the meter is wired and calibrated. Target: everything done Oct 23; Oct 24–25 is buffer.
 
 ## Code style
 - Simple and readable over clever. Type hints on functions. Short docstrings.

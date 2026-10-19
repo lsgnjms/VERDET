@@ -11,3 +11,6 @@ __pycache__/
 
 # Local database
 *.db
+
+# Serial bridge reading log
+gateway/.bridge/
