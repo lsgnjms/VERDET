@@ -14,8 +14,8 @@ Goal (Plan.md): the Arduino Mega replaces the simulator and real, signed measure
 | 1 | `firmware/meter/meter.ino`: 1 kHz timer-interrupt sampling (A0 voltage, A1 ACS712), 60 s windows, seq in EEPROM, Ed25519 sign, JSON line out; compiles (28.5 KB flash, 678 B RAM) | Done 2026-10-19 |
 | 2 | `gateway/serial_bridge.py` (forward unchanged, log to `gateway/.bridge/readings.jsonl`, `--resend SEQ`) + `tests/test_serial_bridge.py` (5 tests) | Done 2026-10-19 |
 | 3 | Golden test: the real Mega's spike signature verifies through `app/verify.py` (2 tests) | Done 2026-10-19 |
-| 4 | Flash firmware + run bridge on the real board (needs COM9 free: close the IDE Serial Monitor) | To do (you) |
-| 5 | Register the real meter (`VD-0001`, key above) on `/meters` | To do (you) |
+| 4 | Flash firmware on the real board (COM9) | Done 2026-10-19: first reading `seq 1`, window 60,000 ms, signature **True** with the board's key, tampered **False**, physics OK. Unwired pins read a phantom ~8.1 V on A0 and 0 mA; normal until the sensors are connected |
+| 5 | Register the real meter (`VD-0001`, key above) on `/meters` | Done 2026-10-19 (owner `0.0.11083341`). Bridge run: `seq 30` → `accepted`, HCS tx `0.0.7179539@1792403438.956951379`. Real board → bridge → app → Hedera works end to end (0 mWh until sensors are wired) |
 | 6 | Wiring (47 kΩ/10 kΩ divider, ACS712, fan + 20–22 Ω 10 W resistor, buck on panel) when parts arrive | Waiting for parts |
 | 7 | Calibration at two load points (±5%), constants into `meter.ino` | Waiting for parts |
 | 8 | Final `docs/wiring.png` | Waiting for parts |

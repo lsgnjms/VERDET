@@ -9,14 +9,16 @@ Goal (Plan.md): users sell verified energy to each other for HBAR in one atomic 
 | 3 | `POST /offers/{id}/buy`: DB lock (open → locked in one UPDATE), HBAR check, **one `atomic_swap` TransferTransaction signed by seller + buyer keys**, filled + tx ID, `trades` HCS message | Done 2026-10-19 |
 | 4 | `POST /offers/{id}/cancel`: own open offers only | Done 2026-10-19 |
 | 5 | `tests/test_market.py` (25 tests, fake Hedera) | Done 2026-10-19 |
-| 6 | Checkpoint on testnet with two real users | To do (you) |
+| 6 | Checkpoint on testnet with two real users | **Passed** 2026-10-19 |
 
 ## Checkpoint (Plan.md), adjusted for real balances
 Plan.md says "User A lists 0.5 VKWH for 2 HBAR". 0.5 VKWH = 500 Wh, about 50 hours of a 10 W panel, and the test seller (`0.0.11006293`) holds about 0.0016 VKWH. So the checkpoint uses **0.001 VKWH for 2 HBAR**. The mechanism is identical.
-- [ ] User A lists 0.001 VKWH for 2 HBAR; User B buys it
-- [ ] **One** transaction on HashScan shows both legs (token transfer + HBAR transfer)
-- [ ] Both balances update; the offer shows `filled`
-- [ ] A second buy attempt fails with a clear message
+- [x] User A (`0.0.11006293`) listed 0.0013 VKWH for 5 HBAR; User B (`0.0.11083341`) bought it (offer 1)
+- [x] **One** transaction: the mirror node returns a single `CRYPTOTRANSFER` `SUCCESS` (`0.0.7179539@1792402780.213973760`) with the HBAR legs (±5 HBAR) and the VKWH legs (±1,300 units)
+- [x] Balances moved in that transaction; the offer shows `filled`
+- [x] A second buy attempt fails with a clear message (`test_second_buy_fails_with_clear_message`)
+
+**Phase 6 checkpoint passed 2026-10-19.**
 
 ## Decisions
 - **Offer states:** `open` → `locked` (purchase in progress) → `filled`, or `cancelled`. The lock is one conditional SQL UPDATE (`WHERE status='open'`), so only one buyer can win, even with two clicks at once.
