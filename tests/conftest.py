@@ -40,6 +40,10 @@ class FakeHedera:
         self.balances_by_account: dict[str, dict] = {}  # per-account overrides of `balances`
         self.swaps: list[tuple] = []                    # atomic_swap arguments
         self.swap_error: str | None = None              # set to make atomic_swap fail
+        self.hcs_message: dict | None = None            # what get_hcs_message returns
+
+    def get_hcs_message(self, topic_id: str, tx_id: str) -> dict | None:
+        return self.hcs_message
 
     def atomic_swap(self, token_id, seller_id, seller_key, buyer_id, buyer_key, amount_mwh, price_tinybar) -> str:
         if self.fail or self.swap_error:
@@ -96,6 +100,7 @@ def fake_hedera(monkeypatch) -> FakeHedera:
     monkeypatch.setattr(hedera, "mint_vkwh", fake.mint_vkwh)
     monkeypatch.setattr(hedera, "reward_vkwh", fake.reward_vkwh)
     monkeypatch.setattr(hedera, "atomic_swap", fake.atomic_swap)
+    monkeypatch.setattr(hedera, "get_hcs_message", fake.get_hcs_message)
 
     def no_network():
         raise AssertionError("A test tried to reach Hedera")

@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from sqlalchemy import Index, text
+from sqlalchemy import Index, inspect, text
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 load_dotenv()
@@ -79,6 +79,7 @@ class Reading(SQLModel, table=True):
     avg_mv: int
     avg_ma: int
     hash: str                                           # sha256 of the canonical string
+    sig: str | None = None                              # the meter's Ed25519 signature (hex), for re-verification
     decision: str                                       # "accepted" or "rejected"
     reasons: str = ""                                   # comma-separated codes, e.g. "REPLAY"
     ai_score: float | None = None
@@ -112,8 +113,23 @@ engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 
 
 def create_db() -> None:
-    """Create any missing tables. No migrations: delete verdet.db to reset locally."""
+    """Create any missing tables, then add any columns added since a table was created.
+    (Only additive, nullable columns; anything bigger: delete verdet.db to reset locally.)"""
     SQLModel.metadata.create_all(engine)
+    add_missing_columns()
+
+
+ADDED_COLUMNS = {"readings": {"sig": "VARCHAR"}}   # table -> {column: SQL type}, added Oct 19
+
+
+def add_missing_columns() -> None:
+    existing = inspect(engine)
+    with engine.begin() as conn:
+        for table, columns in ADDED_COLUMNS.items():
+            have = {c["name"] for c in existing.get_columns(table)}
+            for name, sql_type in columns.items():
+                if name not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
 
 
 def get_session() -> Iterator[Session]:

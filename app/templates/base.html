@@ -63,6 +63,10 @@
     .live-dot { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 9999px; background: #20B26C; }
     .live-dot::after { content: ""; position: absolute; inset: 0; border-radius: 9999px; background: #20B26C; animation: ping 1.6s cubic-bezier(0,0,.2,1) infinite; }
     .live-dot.off { background: #848E9C; } .live-dot.off::after { display: none; }
+    @keyframes coin { 0% { transform: scale(.4) rotate(-30deg); } 60% { transform: scale(1.15) rotate(8deg); } 100% { transform: scale(1) rotate(0); } }
+    .coin { animation: coin .6s cubic-bezier(.2,.9,.3,1.3) both; }
+    @keyframes toast-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+    .toast-in { animation: toast-in .35s ease-out both; }
     @keyframes shimmer { 100% { transform: translateX(100%); } }
     .skeleton { position: relative; overflow: hidden; background: #1B2129; border-radius: .5rem; }
     .skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
@@ -150,8 +154,8 @@
   {% endif %}
 
   <footer class="mx-auto hidden max-w-6xl items-center justify-between px-4 pb-8 text-xs text-muted md:flex">
-    <span>VERDET · Hedera testnet prototype · trust-minimized and auditable</span>
-    <span>IEEE ClimateChain Global Hackathon 2026</span>
+    <span>VERDET · Verifiable Decentralized Energy Trading</span>
+    <span>Running on Hedera testnet · trust-minimized and auditable</span>
   </footer>
 
   <!-- Toasts -->
@@ -198,6 +202,51 @@
       if (t.className.includes("border-up")) setTimeout(() => t.remove(), 7000);
     });
   </script>
+  {% if user %}
+  <script>
+    // Live pop-ups: VKWH earned / reading rejected, on every page.
+    (function () {
+      const KEY = "vd-events-cursor";
+      let cursor = null;
+      try { cursor = sessionStorage.getItem(KEY); } catch (e) {}
+
+      function show(e) {
+        const earned = e.decision === "accepted";
+        const t = document.createElement("a");
+        t.href = "/readings/" + e.id;
+        t.className = "toast toast-in flex items-center gap-3 rounded-xl border p-3.5 shadow-2xl backdrop-blur-xl " +
+          (earned ? "border-sun-500/40 bg-ink-900/95" : "border-down/40 bg-ink-900/95");
+        t.innerHTML = earned
+          ? "<span class='coin grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sun-300 to-sun-600 text-ink-950 shadow-[0_0_24px_rgba(247,166,0,.6)]'>" +
+            "<svg class='h-5 w-5' fill='none' viewBox='0 0 24 24' stroke-width='2' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' d='M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z'/></svg></span>" +
+            "<div class='min-w-0'><div class='num text-base font-semibold text-sun-400'>+" + e.vkwh + " VKWH</div>" +
+            "<div class='text-xs text-muted'>earned for reading #" + e.seq + " · " + e.mwh + " mWh verified</div></div>"
+          : "<span class='grid h-10 w-10 shrink-0 place-items-center rounded-full bg-down/15 text-down'>" +
+            "<svg class='h-5 w-5' fill='none' viewBox='0 0 24 24' stroke-width='2' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12'/></svg></span>" +
+            "<div class='min-w-0'><div class='text-sm font-semibold text-down'>Reading #" + e.seq + " rejected</div>" +
+            "<div class='num text-xs text-muted'>" + e.reasons + " · recorded on Hedera</div></div>";
+        document.getElementById("toasts").appendChild(t);
+        setTimeout(() => t.remove(), 9000);
+      }
+
+      async function poll() {
+        try {
+          const res = await fetch("/api/me/events" + (cursor !== null ? "?after=" + cursor : ""));
+          if (!res.ok) return;
+          const data = await res.json();
+          data.events.filter((e) => e.minted || e.decision === "rejected").forEach(show);
+          if (data.events.some((e) => e.minted) && window.htmx && document.getElementById("balances")) {
+            htmx.ajax("GET", "/wallet/balances", "#balances");
+          }
+          cursor = data.cursor;
+          try { sessionStorage.setItem(KEY, cursor); } catch (e) {}
+        } catch (e) { /* offline: try again next time */ }
+      }
+      poll();
+      setInterval(poll, 8000);
+    })();
+  </script>
+  {% endif %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% set active = "readings" %}
+{% block title %}Reading #{{ r.seq }} · VERDET{% endblock %}
+{% block head %}<script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl-fast.min.js"></script>{% endblock %}
+{% block content %}
+{% set fail = r.reasons | failed_step %}
+<a href="/readings" class="mb-4 inline-flex items-center gap-1 text-sm text-muted hover:text-fg">← All readings</a>
+
+<!-- Header -->
+<section class="card relative mb-4 overflow-hidden p-6">
+  <div class="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full blur-3xl {{ 'bg-up/15' if r.decision == 'accepted' else 'bg-down/15' }}"></div>
+  <div class="relative flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <div class="label">Reading</div>
+      <h1 class="num mt-1 text-2xl font-semibold">{{ r.meter_id }} <span class="text-muted">#{{ r.seq }}</span></h1>
+      <p class="mt-1 text-sm text-muted">Received {{ r.created_at | lagos_time }} (Lagos)</p>
+    </div>
+    <div class="flex flex-col items-end gap-2">
+      {{ ui.badge(r.decision) }}
+      {% if r.reasons %}<span class="num text-xs text-down">{{ r.reasons }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="relative mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-ink-700/60 sm:grid-cols-4">
+    {% for label, value in [("Energy", r.mwh ~ " mWh"), ("Peak power", r.peak_mw ~ " mW"), ("Avg voltage", r.avg_mv ~ " mV"), ("Avg current", r.avg_ma ~ " mA")] %}
+    <div class="bg-ink-850 p-4"><div class="label">{{ label }}</div><div class="num mt-1 text-lg font-medium">{{ value }}</div></div>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="grid gap-4 lg:grid-cols-5">
+  <!-- Checks -->
+  <section class="card p-5 lg:col-span-2">
+    <h2 class="font-semibold">Verification checks</h2>
+    <p class="mt-1 text-xs text-muted">Run in this fixed order; a reading stops at the first failure.</p>
+    <ol class="mt-4 space-y-2">
+      {% for name, text in [
+        ("Registered", "Meter " ~ r.meter_id ~ " is on the registry."),
+        ("Signature", "Signed by that meter's key; nothing changed since."),
+        ("Sequence", "Seq " ~ r.seq ~ " is newer than the meter's last reading."),
+        ("Physics", "Peak ≤ 1.1 × " ~ meter.rated_w ~ " W, and energy ≤ peak × " ~ window_s | round(0) | int ~ " s."),
+        ("AI", "Looks like real sunshine. (Arrives with Phase 5.)"),
+      ] %}
+      {% set i = loop.index0 %}
+      {% if fail is none %}{% set state = "skip" if name == "AI" else "pass" %}
+      {% elif i < fail %}{% set state = "pass" %}{% elif i == fail %}{% set state = "fail" %}{% else %}{% set state = "skip" %}{% endif %}
+      <li class="flex gap-3 rounded-xl border px-3.5 py-3
+                 {{ {'pass': 'border-up/20 bg-up/5', 'fail': 'border-down/40 bg-down/10', 'skip': 'border-ink-700 bg-ink-900/50'}[state] }}">
+        <span class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full
+                     {{ {'pass': 'bg-up/15 text-up', 'fail': 'bg-down/20 text-down', 'skip': 'bg-ink-800 text-muted'}[state] }}">
+          {% if state == "pass" %}{{ ui.icon("check", "h-3.5 w-3.5") }}{% elif state == "fail" %}{{ ui.icon("x", "h-3.5 w-3.5") }}{% else %}·{% endif %}
+        </span>
+        <div class="min-w-0">
+          <div class="text-sm font-medium">{{ name }}
+            {% if state == "fail" %}<span class="num ml-1 text-xs text-down">{{ r.reasons }}</span>{% endif %}
+            {% if state == "skip" %}<span class="ml-1 text-xs font-normal text-muted">not run</span>{% endif %}</div>
+          <div class="text-xs text-muted">{{ text }}</div>
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+
+  <!-- What was signed -->
+  <section class="card p-5 lg:col-span-3">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-semibold">What the meter signed</h2>
+      {% if r.sig %}
+      <button type="button" id="verify-btn" onclick="verifyHere()" class="btn-primary py-1.5 text-xs">{{ ui.icon("shield", "h-3.5 w-3.5") }}Verify in your browser</button>
+      {% endif %}
+    </div>
+    <div class="mt-3 rounded-xl border border-ink-700 bg-ink-950 p-3.5">
+      <div class="label mb-1.5">Canonical string</div>
+      <code id="canonical" class="num block break-all text-xs leading-relaxed text-sun-300">{{ canonical }}</code>
+    </div>
+    <dl class="mt-3 space-y-2.5 text-xs">
+      <div>
+        <dt class="label">SHA-256 hash {% if hash_ok %}<span class="text-up normal-case tracking-normal">· matches the string ✓</span>{% endif %}</dt>
+        <dd class="num mt-1 break-all text-muted">{{ r.hash }}</dd>
+      </div>
+      <div>
+        <dt class="label">Ed25519 signature</dt>
+        <dd class="num mt-1 break-all text-muted">{{ r.sig or "Not stored (readings before Oct 19 didn't keep it)." }}</dd>
+      </div>
+      <div>
+        <dt class="label">Meter public key</dt>
+        <dd class="num mt-1 flex items-center gap-1 break-all text-muted">{{ meter.pubkey_hex }} {{ ui.copy(meter.pubkey_hex) }}</dd>
+      </div>
+    </dl>
+    {% if sig_ok is not none %}
+    <p class="mt-3 text-xs {{ 'text-up' if sig_ok else 'text-down' }}">
+      Server check: the signature {{ "is valid for this meter's key" if sig_ok else "does NOT match this meter's key (forged or changed)" }}.
+    </p>
+    {% endif %}
+    <div id="verify-result" class="mt-3 hidden rounded-xl border p-3.5 text-xs"></div>
+  </section>
+</div>
+
+<!-- Hedera record -->
+<section class="card mt-4 p-5">
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <h2 class="font-semibold">Recorded on Hedera</h2>
+    <div class="flex gap-2">
+      {% if r.hcs_tx %}{{ ui.proof(hashscan_tx(r.hcs_tx), "Decision tx") }}{% endif %}
+      {% if r.mint_tx %}{{ ui.proof(hashscan_tx(r.mint_tx), "Mint tx") }}{% endif %}
+    </div>
+  </div>
+  {% if r.hcs_tx %}
+  <div class="mt-3" hx-get="/readings/{{ r.id }}/hcs" hx-trigger="load" hx-swap="innerHTML">
+    <div class="space-y-2"><div class="skeleton h-4 w-56"></div><div class="skeleton h-32 w-full"></div></div>
+  </div>
+  {% else %}
+  <p class="mt-3 text-sm text-sun-400">This decision isn't anchored on Hedera yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Independent check in the browser: rebuild the canonical string from the fields,
+  // verify the Ed25519 signature with TweetNaCl, and recompute the SHA-256.
+  const reading = {{ fields | tojson }};
+  const sigHex = {{ (r.sig or "") | tojson }};
+  const pubHex = {{ meter.pubkey_hex | tojson }};
+  const storedHash = {{ r.hash | tojson }};
+  const hexToBytes = (h) => new Uint8Array(h.match(/../g).map((b) => parseInt(b, 16)));
+  const bytesToHex = (b) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+
+  async function verifyHere() {
+    const out = document.getElementById("verify-result");
+    const r = reading;
+    const canonical = ["VERDET", "v1", r.meterId, r.seq, r.tStartMs, r.tEndMs, r.mWh, r.peakMw, r.avgMv, r.avgMa].join("|");
+    const msg = new TextEncoder().encode(canonical);
+    const sigOk = nacl.sign.detached.verify(msg, hexToBytes(sigHex), hexToBytes(pubHex));
+    const hash = bytesToHex(await crypto.subtle.digest("SHA-256", msg));
+    const hashOk = hash === storedHash;
+    const ok = sigOk && hashOk;
+    out.className = "mt-3 rounded-xl border p-3.5 text-xs " + (ok ? "border-up/30 bg-up/10" : "border-down/30 bg-down/10");
+    out.innerHTML =
+      "<div class='font-semibold " + (ok ? "text-up" : "text-down") + "'>" +
+      (ok ? "Verified in your browser ✓" : "Verification failed ✗") + "</div>" +
+      "<div class='mt-1.5 text-muted'>Signature (Ed25519, TweetNaCl): <b class='" + (sigOk ? "text-up" : "text-down") + "'>" + (sigOk ? "valid" : "invalid") + "</b></div>" +
+      "<div class='text-muted'>SHA-256 of the rebuilt string: <b class='" + (hashOk ? "text-up" : "text-down") + "'>" + (hashOk ? "matches" : "differs") + "</b></div>" +
+      "<div class='mt-1.5 text-muted'>Nothing here trusted the VERDET server: the string was rebuilt from the numbers and checked locally.</div>";
+    out.classList.remove("hidden");
+  }
+</script>
+{% endblock %}

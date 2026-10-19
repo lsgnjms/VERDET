@@ -4,6 +4,7 @@ Amounts are integers: VKWH in mWh units (6 decimals, 1 unit = 1 mWh),
 HBAR in tinybars (1 HBAR = 100,000,000 tinybars).
 """
 
+import base64
 import logging
 import os
 from functools import lru_cache
@@ -273,6 +274,28 @@ def get_balances(account_id: str, token_id: str | None = None) -> dict | None:
         return None
     vkwh = next((t["balance"] for t in balance.get("tokens", []) if t["token_id"] == token_id), 0)
     return {"hbar_tinybar": balance["balance"], "vkwh_mwh": vkwh}
+
+
+def get_hcs_message(topic_id: str, tx_id: str) -> dict | None:
+    """The message a TopicMessageSubmit transaction put on a topic, read back from
+    the mirror node: {"sequence", "consensus", "text"}. None if not found (yet)."""
+    base = os.getenv("MIRROR_URL", "https://testnet.mirrornode.hedera.com/api/v1").rstrip("/")
+    account, start = tx_id.split("@")
+    secs, nanos = start.split(".")
+    try:
+        tx = httpx.get(f"{base}/transactions/{account}-{secs}-{nanos}", timeout=5)
+        tx.raise_for_status()
+        consensus = tx.json()["transactions"][0]["consensus_timestamp"]
+        msgs = httpx.get(f"{base}/topics/{topic_id}/messages", params={"timestamp": consensus}, timeout=5)
+        msgs.raise_for_status()
+        found = msgs.json()["messages"][0]
+    except (httpx.HTTPError, KeyError, IndexError, ValueError):
+        return None
+    return {
+        "sequence": found["sequence_number"],
+        "consensus": found["consensus_timestamp"],
+        "text": base64.b64decode(found["message"]).decode("utf-8", errors="replace"),
+    }
 
 
 # --- HashScan links ---------------------------------------------------------

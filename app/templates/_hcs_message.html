@@ -1,0 +1,15 @@
+{% import "_ui.html" as ui with context %}
+{% if message %}
+<div class="fade-in">
+  <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted">
+    <span>Topic message <span class="num text-fg">#{{ message.sequence }}</span></span>
+    <span>Consensus time <span class="num text-fg">{{ message.consensus }}</span></span>
+    {% if hash_on_chain_ok %}<span class="text-up">Hash on Hedera matches this reading ✓</span>
+    {% elif parsed %}<span class="text-down">Hash on Hedera differs from this reading ✗</span>{% endif %}
+  </div>
+  <pre class="num mt-3 overflow-x-auto rounded-xl border border-ink-700 bg-ink-950 p-4 text-xs leading-relaxed text-proof">{{ pretty }}</pre>
+  <p class="mt-2 text-xs text-muted">Read live from the Hedera mirror node. This is the public, timestamped record anyone can check.</p>
+</div>
+{% else %}
+<p class="text-sm text-muted">Not on the mirror node yet (it lags consensus by a few seconds), or the mirror node is slow. Refresh in a moment.</p>
+{% endif %}

@@ -2,6 +2,7 @@
 {% import "_ui.html" as ui with context %}
 {% set active = "market" %}
 {% block title %}Market · VERDET{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>{% endblock %}
 {% block content %}
 <!-- Pair header / ticker -->
 <section class="card mb-4 flex flex-wrap items-center gap-x-8 gap-y-3 px-5 py-4">
@@ -110,14 +111,33 @@
           <span class="absolute inset-y-0 right-3 flex items-center text-xs text-muted">HBAR</span>
         </div>
       </label>
-      <div class="flex items-center justify-between rounded-lg bg-ink-900 px-3 py-2 text-xs">
-        <span class="text-muted">Price per kWh</span>
-        <span id="sell-unit" class="num text-fg">—</span>
+      <div class="rounded-lg bg-ink-900 px-3 py-2 text-xs">
+        <div class="flex items-center justify-between">
+          <span class="text-muted">Price per kWh</span>
+          <span id="sell-unit" class="num text-fg">—</span>
+        </div>
+        <div class="mt-1 flex items-center justify-between text-[11px]">
+          <span class="text-muted">Allowed range</span>
+          <span class="num text-muted">{{ band.min }} – {{ band.max }} HBAR/kWh</span>
+        </div>
+        <p id="sell-band-msg" class="mt-1 hidden text-[11px] text-down">Outside the allowed price range.</p>
       </div>
-      <button class="btn w-full bg-down py-2.5 text-white hover:bg-down/90">List offer</button>
+      <button id="sell-submit" class="btn w-full bg-down py-2.5 text-white hover:bg-down/90">List offer</button>
     </form>
   </section>
 </div>
+
+<!-- Price history -->
+<section class="card mt-4 p-5">
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <h2 class="font-semibold">Price history</h2>
+    <span class="text-xs text-muted">HBAR per kWh for each settled trade · bars show volume (VKWH)</span>
+  </div>
+  <div class="relative mt-4 h-56">
+    <canvas id="price-chart"></canvas>
+    {% if not price_history %}<div class="absolute inset-0 grid place-items-center text-sm text-muted">No trades yet. The first one starts the chart.</div>{% endif %}
+  </div>
+</section>
 
 <!-- Your offers / market trades -->
 <section class="card mt-4">
@@ -213,10 +233,18 @@
       document.getElementById("sell-amount").value = (mwh / 1e6).toFixed(6);
       this.preview();
     },
+    band: { min: {{ band.min | float }}, max: {{ band.max | float }} },
     preview() {
       const a = parseFloat(document.getElementById("sell-amount").value);
       const p = parseFloat(document.getElementById("sell-price").value);
-      document.getElementById("sell-unit").textContent = a > 0 && p > 0 ? (p / a).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " HBAR" : "—";
+      const unitEl = document.getElementById("sell-unit");
+      const msg = document.getElementById("sell-band-msg");
+      if (!(a > 0 && p > 0)) { unitEl.textContent = "—"; unitEl.className = "num text-fg"; msg.classList.add("hidden"); return; }
+      const unit = p / a;
+      const ok = unit >= this.band.min && unit <= this.band.max;
+      unitEl.textContent = unit.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " HBAR";
+      unitEl.className = "num " + (ok ? "text-up" : "text-down");
+      msg.classList.toggle("hidden", ok);
     },
     confirmBuy(id, amount, price, unit, seller) {
       document.getElementById("buy-form").action = "/offers/" + id + "/buy";
@@ -234,5 +262,38 @@
       });
     },
   };
+
+  // Price history: line = HBAR per kWh, bars = volume.
+  (function () {
+    const history = {{ price_history | tojson }};
+    if (!history.length) return;
+    const ctx = document.getElementById("price-chart").getContext("2d");
+    const fill = ctx.createLinearGradient(0, 0, 0, 224);
+    fill.addColorStop(0, "rgba(32,178,108,.30)");
+    fill.addColorStop(1, "rgba(32,178,108,0)");
+    const mono = { family: "JetBrains Mono", size: 10 };
+    new Chart(ctx, {
+      data: {
+        labels: history.map((h) => h.t),
+        datasets: [
+          { type: "line", label: "Price", data: history.map((h) => h.p), yAxisID: "y", borderColor: "#20B26C",
+            backgroundColor: fill, fill: true, tension: .3, borderWidth: 2, pointRadius: 4, pointBackgroundColor: "#20B26C" },
+          { type: "bar", label: "Volume", data: history.map((h) => h.v), yAxisID: "v",
+            backgroundColor: "rgba(247,166,0,.35)", borderRadius: 4, maxBarThickness: 18 },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: "#101418", borderColor: "#262E38", borderWidth: 1,
+          callbacks: { label: (c) => c.dataset.label === "Price" ? c.parsed.y.toLocaleString() + " HBAR/kWh" : c.parsed.y.toFixed(6) + " VKWH" } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "#848E9C", maxTicksLimit: 6, font: mono } },
+          y: { position: "left", grid: { color: "rgba(255,255,255,.05)" }, border: { display: false }, ticks: { color: "#848E9C", font: mono } },
+          v: { position: "right", grid: { display: false }, border: { display: false }, beginAtZero: true,
+               ticks: { color: "rgba(247,166,0,.7)", font: mono, maxTicksLimit: 4 } },
+        },
+      },
+    });
+  })();
 </script>
 {% endblock %}

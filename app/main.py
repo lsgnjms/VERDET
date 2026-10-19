@@ -34,8 +34,8 @@ from app.auth import (
     verify_password,
 )
 from app.models import Meter, Offer, Reading, User, create_db, get_session, utc_now
-from app.verify import DUPLICATE, Decision, verify_reading
-from gateway.canonical import METER_ID_PATTERN, canonical_string
+from app.verify import DUPLICATE, Decision, signature_valid, verify_reading
+from gateway.canonical import METER_ID_PATTERN, canonical_string, reading_hash
 
 load_dotenv()
 
@@ -268,7 +268,21 @@ def dashboard_context(db: Session, user: User) -> dict:
         recent = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id)
                          .order_by(Reading.id.desc()).limit(5)).all()
     return {"user": user, "meter": meter, "status": meter_status(db, meter), "today": today,
-            "rewarded_mwh": rewarded_mwh, "recent": recent}
+            "rewarded_mwh": rewarded_mwh, "recent": recent,
+            "checklist": onboarding_checklist(db, user, meter, bool(recent), rewarded_mwh)}
+
+
+def onboarding_checklist(db: Session, user: User, meter: Meter | None, has_reading: bool, rewarded_mwh: int) -> list[dict]:
+    """Getting-started steps, each ticked from real data. The card hides when all are done."""
+    traded = db.exec(select(func.count(Offer.id)).where(
+        Offer.status == "filled", (Offer.seller_id == user.id) | (Offer.buyer_id == user.id))).one() > 0
+    return [
+        {"title": "Create your account", "text": "Your App ID is a real Hedera account.", "done": True, "href": None},
+        {"title": "Add your meter", "text": "Register the device's public key.", "done": meter is not None, "href": "/meters"},
+        {"title": "Send a first reading", "text": "Start the bridge or the simulator.", "done": has_reading, "href": "/readings"},
+        {"title": "Earn your first VKWH", "text": "Accepted energy is minted to you.", "done": rewarded_mwh > 0, "href": "/readings"},
+        {"title": "Make a first trade", "text": "Sell VKWH or buy someone else's.", "done": traded, "href": "/market"},
+    ]
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -351,6 +365,98 @@ def readings_table(request: Request, db: DbSession, user: CurrentUser, show: str
     if not user:
         return Response(status_code=401)
     return templates.TemplateResponse(request, "_readings_table.html", user_readings_context(db, user, show))
+
+
+def owned_reading(db: Session, user: User, reading_id: int) -> tuple[Reading, Meter] | None:
+    """A reading from one of this user's meters (and that meter), or None."""
+    reading = db.get(Reading, reading_id)
+    if reading is None:
+        return None
+    meter = db.exec(select(Meter).where(Meter.meter_id == reading.meter_id, Meter.owner_id == user.id)).first()
+    return (reading, meter) if meter else None
+
+
+def reading_fields(r: Reading) -> dict:
+    """The reading as the meter sent it (camelCase), minus the signature."""
+    return {"meterId": r.meter_id, "seq": r.seq, "tStartMs": r.t_start_ms, "tEndMs": r.t_end_ms,
+            "mWh": r.mwh, "peakMw": r.peak_mw, "avgMv": r.avg_mv, "avgMa": r.avg_ma}
+
+
+@app.get("/readings/{reading_id}", response_class=HTMLResponse)
+def reading_detail(request: Request, db: DbSession, user: CurrentUser, reading_id: int):
+    """Everything about one reading: what was signed, the checks, and its proof on Hedera."""
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    found = owned_reading(db, user, reading_id)
+    if found is None:
+        flash(request, "error", "That reading isn't one of yours, or it doesn't exist.")
+        return RedirectResponse("/readings", status_code=303)
+    reading, meter = found
+    fields = reading_fields(reading)
+    canonical = canonical_string(fields)
+    return templates.TemplateResponse(request, "reading_detail.html", {
+        "user": user, "r": reading, "meter": meter, "fields": fields, "canonical": canonical,
+        "hash_ok": reading_hash(canonical) == reading.hash,
+        "sig_ok": signature_valid(meter.pubkey_hex, canonical, reading.sig) if reading.sig else None,
+        "window_s": (reading.t_end_ms - reading.t_start_ms) / 1000,
+    })
+
+
+@app.get("/readings/{reading_id}/hcs", response_class=HTMLResponse)
+def reading_hcs(request: Request, db: DbSession, user: CurrentUser, reading_id: int):
+    """HTMX partial: the decision message as Hedera recorded it (from the mirror node)."""
+    if not user:
+        return Response(status_code=401)
+    found = owned_reading(db, user, reading_id)
+    if found is None:
+        return Response(status_code=404)
+    reading, _ = found
+    message, parsed = None, None
+    if reading.hcs_tx:
+        try:
+            message = hedera.get_hcs_message(hedera.config_id("READINGS_TOPIC_ID"), reading.hcs_tx)
+        except hedera.HederaError:
+            message = None
+        if message:
+            try:
+                parsed = json.loads(message["text"])
+            except ValueError:
+                parsed = None
+    return templates.TemplateResponse(request, "_hcs_message.html", {
+        "r": reading, "message": message, "parsed": parsed,
+        "pretty": json.dumps(parsed, indent=2) if parsed else (message or {}).get("text"),
+        "hash_on_chain_ok": bool(parsed) and parsed.get("hash") == reading.hash,
+    })
+
+
+# --- Live events (pop-ups) ------------------------------------------------------
+
+SETTLE_SECONDS = 30   # a reading still waiting on Hedera after this long is reported anyway
+
+
+@app.get("/api/me/events")
+def my_events(db: DbSession, user: CurrentUser, after: int | None = None) -> JSONResponse:
+    """New, settled decisions on the user's meter since reading id `after`, for pop-ups.
+    Without `after`, returns just the current cursor (so old readings don't pop up)."""
+    if not user:
+        return JSONResponse({"error": "login required"}, status_code=401)
+    meter = user_meter(db, user)
+    if meter is None:
+        return JSONResponse({"cursor": after or 0, "events": []})
+    if after is None:
+        latest = db.exec(select(func.coalesce(func.max(Reading.id), 0)).where(Reading.meter_id == meter.meter_id)).one()
+        return JSONResponse({"cursor": latest, "events": []})
+    rows = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id, Reading.id > after)
+                   .order_by(Reading.id).limit(10)).all()
+    settled_before = datetime.now(timezone.utc) - timedelta(seconds=SETTLE_SECONDS)
+    events, cursor = [], after
+    for r in rows:
+        if not (r.hcs_tx or as_utc(r.created_at) < settled_before):
+            break                               # still talking to Hedera: report it next time
+        events.append({"id": r.id, "seq": r.seq, "decision": r.decision, "reasons": r.reasons,
+                       "mwh": r.mwh, "vkwh": format_vkwh(r.mwh), "minted": bool(r.mint_tx)})
+        cursor = r.id
+    return JSONResponse({"cursor": cursor, "events": events})
 
 
 # --- Meters -----------------------------------------------------------------
@@ -501,6 +607,7 @@ def save_reading(db: Session, reading: dict, decision: Decision) -> Reading:
         avg_mv=reading["avgMv"],
         avg_ma=reading["avgMa"],
         hash=decision.hash,
+        sig=reading["sig"] if isinstance(reading.get("sig"), str) and len(reading["sig"]) <= 256 else None,
         decision=decision.decision,
         reasons=",".join(decision.reasons),
     )
@@ -610,6 +717,19 @@ VKWH_DECIMALS = 6        # 1 unit = 1 mWh
 HBAR_DECIMALS = 8        # 1 unit = 1 tinybar
 OPEN, LOCKED, FILLED, CANCELLED = "open", "locked", "filled", "cancelled"
 MAX_HEDERA_UNITS = 2**63 - 1   # Hedera amounts are signed 64-bit integers
+# Price band (HBAR per kWh): offers outside it are refused, like an exchange's
+# price protection. Testnet defaults; set real values in .env.
+PRICE_MIN_PER_KWH = Decimal(os.getenv("PRICE_MIN_HBAR_PER_KWH", "1"))
+PRICE_MAX_PER_KWH = Decimal(os.getenv("PRICE_MAX_HBAR_PER_KWH", "50"))
+
+
+def unit_price(amount_mwh: int, price_tinybar: int) -> Decimal:
+    """HBAR per kWh (= per VKWH) for an amount and total price."""
+    return (Decimal(price_tinybar) / Decimal(10**8)) / (Decimal(amount_mwh) / Decimal(10**6))
+
+
+def price_in_band(amount_mwh: int, price_tinybar: int) -> bool:
+    return PRICE_MIN_PER_KWH <= unit_price(amount_mwh, price_tinybar) <= PRICE_MAX_PER_KWH
 
 
 def parse_units(text: str, decimals: int) -> int | None:
@@ -629,8 +749,7 @@ def parse_units(text: str, decimals: int) -> int | None:
 
 def price_per_kwh(offer: Offer) -> str:
     """HBAR per VKWH (= per kWh), for comparing offers."""
-    per = Decimal(offer.price_tinybar) / Decimal(10**8) / (Decimal(offer.amount_mwh) / Decimal(10**6))
-    return f"{per:,.2f}"
+    return f"{unit_price(offer.amount_mwh, offer.price_tinybar):,.2f}"
 
 
 templates.env.filters["price_per_kwh"] = price_per_kwh
@@ -681,9 +800,14 @@ def market_context(db: Session, user: User) -> dict:
     others.sort(key=lambda o: Decimal(o.price_tinybar) / Decimal(o.amount_mwh))
     day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
     volume_24h = sum(t.amount_mwh for t in trades if as_utc(t.updated_at) >= day_ago)
+    # Price history for the chart: every filled trade, oldest first.
+    history = db.exec(select(Offer).where(Offer.status == FILLED).order_by(Offer.updated_at)).all()
+    price_history = [{"t": format_lagos_time(t.updated_at)[:-3], "p": float(unit_price(t.amount_mwh, t.price_tinybar)),
+                      "v": t.amount_mwh / 1_000_000} for t in history]
     return {
         "user": user, "users": users, "balances": balances, "listed_mwh": listed, "available_mwh": available,
-        "offers": others, "my_offers": my_offers, "trades": trades,
+        "offers": others, "my_offers": my_offers, "trades": trades, "price_history": price_history,
+        "band": {"min": PRICE_MIN_PER_KWH, "max": PRICE_MAX_PER_KWH},
         "ticker": {"last": trades[0] if trades else None, "volume_24h_mwh": volume_24h,
                    "open_count": len(open_offers)},
     }
@@ -715,6 +839,9 @@ def create_offer(
         flash(request, "error", "Amount must be a positive number of VKWH with at most 6 decimals (e.g. 0.5).")
     elif price is None:
         flash(request, "error", "Price must be a positive number of HBAR with at most 8 decimals (e.g. 2).")
+    elif not price_in_band(amount, price):
+        flash(request, "error", f"Price must be between {PRICE_MIN_PER_KWH} and {PRICE_MAX_PER_KWH} HBAR per kWh. "
+                                f"Yours is {unit_price(amount, price):,.2f} HBAR per kWh.")
     else:
         balances = hedera.get_balances(user.account_id)
         if balances is None:
