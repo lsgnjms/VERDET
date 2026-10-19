@@ -37,6 +37,15 @@ class FakeHedera:
         self.mints: list[tuple[str, int]] = []      # (token_id, amount_mwh)
         self.rewards: list[tuple[str, str, int]] = []   # (token_id, to_account, amount_mwh)
         self.tx_count = 0
+        self.balances_by_account: dict[str, dict] = {}  # per-account overrides of `balances`
+        self.swaps: list[tuple] = []                    # atomic_swap arguments
+        self.swap_error: str | None = None              # set to make atomic_swap fail
+
+    def atomic_swap(self, token_id, seller_id, seller_key, buyer_id, buyer_key, amount_mwh, price_tinybar) -> str:
+        if self.fail or self.swap_error:
+            raise hedera.HederaError(self.swap_error or "Hedera is slow or unreachable, try again.")
+        self.swaps.append((token_id, seller_id, seller_key, buyer_id, buyer_key, amount_mwh, price_tinybar))
+        return self._tx()
 
     def _tx(self) -> str:
         self.tx_count += 1
@@ -67,7 +76,7 @@ class FakeHedera:
         return f"0.0.99900{self.accounts_created}", FAKE_PRIVATE_KEY
 
     def get_balances(self, account_id: str, token_id: str | None = None) -> dict | None:
-        return self.balances
+        return self.balances_by_account.get(account_id, self.balances)
 
 
 @pytest.fixture
@@ -86,6 +95,7 @@ def fake_hedera(monkeypatch) -> FakeHedera:
     monkeypatch.setattr(hedera, "submit_message", fake.submit_message)
     monkeypatch.setattr(hedera, "mint_vkwh", fake.mint_vkwh)
     monkeypatch.setattr(hedera, "reward_vkwh", fake.reward_vkwh)
+    monkeypatch.setattr(hedera, "atomic_swap", fake.atomic_swap)
 
     def no_network():
         raise AssertionError("A test tried to reach Hedera")

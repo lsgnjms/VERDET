@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Marketplace · VERDET{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-1">Marketplace</h1>
+<p class="text-sm text-slate-500 mb-5">
+  Trade VKWH, the verified-energy reward token, for HBAR. Every purchase is <strong>one</strong> Hedera transaction:
+  the VKWH and the HBAR move together, or neither moves.
+</p>
+
+{% if flash %}
+<div class="mb-5 rounded-lg border px-4 py-3 text-sm
+            {{ 'bg-emerald-50 border-emerald-200 text-emerald-900' if flash.kind == 'success' else 'bg-red-50 border-red-200 text-red-800' }}">
+  {{ flash.text }}
+  {% if flash.link %}<a href="{{ flash.link }}" target="_blank" rel="noopener" class="ml-1 font-medium underline">See it on HashScan ↗</a>{% endif %}
+</div>
+{% endif %}
+
+<!-- Sell -->
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
+  <div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+    <h2 class="font-semibold">Sell your VKWH</h2>
+    <p class="text-sm text-slate-500">
+      {% if available_mwh is none %}
+        Balance not available right now.
+      {% else %}
+        Available to list: <span class="font-mono text-slate-800">{{ available_mwh | vkwh }} VKWH</span>
+        {% if listed_mwh %}<span class="text-slate-400">({{ listed_mwh | vkwh }} already listed)</span>{% endif %}
+      {% endif %}
+    </p>
+  </div>
+  <form method="post" action="/offers" class="grid gap-3 sm:grid-cols-[1fr_1fr_auto] items-end">
+    <label class="block">
+      <span class="text-sm font-medium">Amount (VKWH)</span>
+      <input name="amount_vkwh" required inputmode="decimal" placeholder="0.5"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono">
+    </label>
+    <label class="block">
+      <span class="text-sm font-medium">Price (HBAR, total)</span>
+      <input name="price_hbar" required inputmode="decimal" placeholder="2"
+             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono">
+    </label>
+    <button class="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2">List offer</button>
+  </form>
+</section>
+
+<!-- Buy -->
+<h2 class="font-semibold mb-2">Open offers</h2>
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto">
+  {% if offers %}
+  <table class="w-full text-sm">
+    <thead class="text-left text-slate-500 border-b border-slate-200">
+      <tr>
+        <th class="px-4 py-2 font-medium">Seller</th>
+        <th class="px-4 py-2 font-medium text-right">Amount</th>
+        <th class="px-4 py-2 font-medium text-right">Price</th>
+        <th class="px-4 py-2 font-medium text-right">Per kWh</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for o in offers %}
+      <tr class="border-b border-slate-100 last:border-0">
+        <td class="px-4 py-2 font-mono">{{ users[o.seller_id].account_id }}</td>
+        <td class="px-4 py-2 text-right font-mono">{{ o.amount_mwh | vkwh }} VKWH</td>
+        <td class="px-4 py-2 text-right font-mono">{{ o.price_tinybar | hbar }} HBAR</td>
+        <td class="px-4 py-2 text-right font-mono text-slate-500">{{ o | price_per_kwh }}</td>
+        <td class="px-4 py-2 text-right">
+          <form method="post" action="/offers/{{ o.id }}/buy"
+                onsubmit="const b = this.querySelector('button'); b.disabled = true; b.textContent = 'Buying on Hedera…';">
+            <button class="rounded-md bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white font-medium px-3 py-1.5">Buy</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="px-4 py-6 text-sm text-slate-500">No offers from other users right now.</p>
+  {% endif %}
+</section>
+
+<!-- My offers -->
+{% if my_offers %}
+<h2 class="font-semibold mb-2">Your offers</h2>
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto">
+  <table class="w-full text-sm">
+    <tbody>
+      {% for o in my_offers %}
+      <tr class="border-b border-slate-100 last:border-0">
+        <td class="px-4 py-2 font-mono">{{ o.amount_mwh | vkwh }} VKWH</td>
+        <td class="px-4 py-2 font-mono">{{ o.price_tinybar | hbar }} HBAR</td>
+        <td class="px-4 py-2 text-slate-500">{{ "being bought…" if o.status == "locked" else "open" }}</td>
+        <td class="px-4 py-2 text-right">
+          {% if o.status == "open" %}
+          <form method="post" action="/offers/{{ o.id }}/cancel">
+            <button class="text-sm text-slate-600 hover:text-red-700 underline">Cancel</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<!-- History -->
+<h2 class="font-semibold mb-2">Recent trades</h2>
+<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+  {% if trades %}
+  <table class="w-full text-sm">
+    <thead class="text-left text-slate-500 border-b border-slate-200">
+      <tr>
+        <th class="px-4 py-2 font-medium">Time (Lagos)</th>
+        <th class="px-4 py-2 font-medium">Seller → Buyer</th>
+        <th class="px-4 py-2 font-medium text-right">VKWH</th>
+        <th class="px-4 py-2 font-medium text-right">HBAR</th>
+        <th class="px-4 py-2 font-medium">Proof</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in trades %}
+      <tr class="border-b border-slate-100 last:border-0">
+        <td class="px-4 py-2 whitespace-nowrap text-slate-600">{{ t.updated_at | lagos_time }}</td>
+        <td class="px-4 py-2 font-mono whitespace-nowrap">{{ users[t.seller_id].account_id }} → {{ users[t.buyer_id].account_id }}</td>
+        <td class="px-4 py-2 text-right font-mono">{{ t.amount_mwh | vkwh }}</td>
+        <td class="px-4 py-2 text-right font-mono">{{ t.price_tinybar | hbar }}</td>
+        <td class="px-4 py-2"><a href="{{ hashscan_tx(t.tx_id) }}" target="_blank" rel="noopener" class="text-emerald-700 underline">1 tx ↗</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="px-4 py-6 text-sm text-slate-500">No trades yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -8,6 +8,7 @@ them in a thread pool so a slow Hedera call doesn't block other requests.
 import json
 import os
 from contextlib import asynccontextmanager
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
@@ -16,7 +17,7 @@ from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from starlette.middleware.sessions import SessionMiddleware
@@ -24,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import hedera
 from app.auth import (
     current_user,
+    decrypt_key,
     encrypt_key,
     hash_password,
     log_in,
@@ -31,7 +33,7 @@ from app.auth import (
     normalize_email,
     verify_password,
 )
-from app.models import Meter, Reading, User, create_db, get_session
+from app.models import Meter, Offer, Reading, User, create_db, get_session, utc_now
 from app.verify import DUPLICATE, Decision, verify_reading
 from gateway.canonical import METER_ID_PATTERN, canonical_string
 
@@ -444,3 +446,207 @@ def receive_reading(db: DbSession, reading: Annotated[dict, Body()]) -> JSONResp
         "hash": decision.hash,
         **hedera_result,
     })
+
+
+# --- Marketplace (Phase 6) ----------------------------------------------------
+
+VKWH_DECIMALS = 6        # 1 unit = 1 mWh
+HBAR_DECIMALS = 8        # 1 unit = 1 tinybar
+OPEN, LOCKED, FILLED, CANCELLED = "open", "locked", "filled", "cancelled"
+MAX_HEDERA_UNITS = 2**63 - 1   # Hedera amounts are signed 64-bit integers
+
+
+def parse_units(text: str, decimals: int) -> int | None:
+    """'0.5' with 6 decimals -> 500000. None if not a positive number with at
+    most `decimals` decimal places. Uses Decimal, so no float rounding."""
+    try:
+        value = Decimal(text.strip())
+    except (InvalidOperation, AttributeError):
+        return None
+    if not value.is_finite() or value <= 0:
+        return None
+    scaled = value * (10 ** decimals)
+    if scaled != scaled.to_integral_value() or scaled > MAX_HEDERA_UNITS:
+        return None
+    return int(scaled)
+
+
+def price_per_kwh(offer: Offer) -> str:
+    """HBAR per VKWH (= per kWh), for comparing offers."""
+    per = Decimal(offer.price_tinybar) / Decimal(10**8) / (Decimal(offer.amount_mwh) / Decimal(10**6))
+    return f"{per:,.2f}"
+
+
+templates.env.filters["price_per_kwh"] = price_per_kwh
+
+
+def flash(request: Request, kind: str, text: str, link: str | None = None) -> None:
+    """A one-time message shown on the next page load (success or error)."""
+    request.session["flash"] = {"kind": kind, "text": text, "link": link}
+
+
+def listed_mwh(db: Session, user: User) -> int:
+    """VKWH the user has already put up for sale (open or mid-purchase)."""
+    return db.exec(
+        select(func.coalesce(func.sum(Offer.amount_mwh), 0))
+        .where(Offer.seller_id == user.id, Offer.status.in_([OPEN, LOCKED]))
+    ).one()
+
+
+def trade_message(offer: Offer, seller: User, buyer: User) -> str:
+    """The `trades` HCS message (Plan.md schema), compact JSON, under 1 KB."""
+    return json.dumps(
+        {"t": "trade", "v": 1, "offerId": offer.id, "seller": seller.account_id, "buyer": buyer.account_id,
+         "vkwh": format_vkwh(offer.amount_mwh), "hbar": format_hbar(offer.price_tinybar), "tx": offer.tx_id},
+        separators=(",", ":"),
+    )
+
+
+def friendly_swap_error(message: str) -> str:
+    if "INSUFFICIENT_ACCOUNT_BALANCE" in message or "INSUFFICIENT_PAYER_BALANCE" in message:
+        return "You don't have enough HBAR for this offer."
+    if "INSUFFICIENT_TOKEN_BALANCE" in message:
+        return "The seller no longer has enough VKWH, so the offer was cancelled."
+    return f"The trade didn't go through, and nothing moved. {message}"
+
+
+def market_context(db: Session, user: User) -> dict:
+    users = {u.id: u for u in db.exec(select(User))}
+    open_offers = db.exec(select(Offer).where(Offer.status == OPEN).order_by(Offer.id.desc())).all()
+    my_offers = db.exec(
+        select(Offer).where(Offer.seller_id == user.id, Offer.status.in_([OPEN, LOCKED])).order_by(Offer.id.desc())
+    ).all()
+    trades = db.exec(select(Offer).where(Offer.status == FILLED).order_by(Offer.updated_at.desc()).limit(20)).all()
+    balances = hedera.get_balances(user.account_id)
+    listed = listed_mwh(db, user)
+    available = max(balances["vkwh_mwh"] - listed, 0) if balances else None
+    return {
+        "user": user, "users": users, "balances": balances, "listed_mwh": listed, "available_mwh": available,
+        "offers": [o for o in open_offers if o.seller_id != user.id],
+        "my_offers": my_offers, "trades": trades,
+    }
+
+
+@app.get("/market", response_class=HTMLResponse)
+def market_page(request: Request, db: DbSession, user: CurrentUser):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    context = market_context(db, user)
+    context["flash"] = request.session.pop("flash", None)
+    return templates.TemplateResponse(request, "market.html", context)
+
+
+@app.post("/offers")
+def create_offer(
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    amount_vkwh: Annotated[str, Form()],
+    price_hbar: Annotated[str, Form()],
+):
+    """List VKWH for sale at a fixed HBAR price."""
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    amount = parse_units(amount_vkwh, VKWH_DECIMALS)
+    price = parse_units(price_hbar, HBAR_DECIMALS)
+    if amount is None:
+        flash(request, "error", "Amount must be a positive number of VKWH with at most 6 decimals (e.g. 0.5).")
+    elif price is None:
+        flash(request, "error", "Price must be a positive number of HBAR with at most 8 decimals (e.g. 2).")
+    else:
+        balances = hedera.get_balances(user.account_id)
+        if balances is None:
+            flash(request, "error", "Couldn't check your VKWH balance on Hedera right now. Try again in a moment.")
+        elif amount > balances["vkwh_mwh"] - listed_mwh(db, user):
+            available = max(balances["vkwh_mwh"] - listed_mwh(db, user), 0)
+            flash(request, "error", f"You can list at most {format_vkwh(available)} VKWH "
+                                    "(your balance minus what you've already listed).")
+        else:
+            db.add(Offer(seller_id=user.id, amount_mwh=amount, price_tinybar=price))
+            db.commit()
+            flash(request, "success", f"Listed {format_vkwh(amount)} VKWH for {format_hbar(price)} HBAR.")
+    return RedirectResponse("/market", status_code=303)
+
+
+@app.post("/offers/{offer_id}/buy")
+def buy_offer(request: Request, db: DbSession, user: CurrentUser, offer_id: int):
+    """Buy an offer: ONE atomic Hedera transfer moves VKWH seller->buyer and
+    HBAR buyer->seller, signed by both custodial keys (rule 9)."""
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    offer = db.get(Offer, offer_id)
+    if offer is None:
+        flash(request, "error", "That offer doesn't exist.")
+        return RedirectResponse("/market", status_code=303)
+    if offer.seller_id == user.id:
+        flash(request, "error", "You can't buy your own offer.")
+        return RedirectResponse("/market", status_code=303)
+
+    # Lock: only one buyer can move the offer from open to locked.
+    locked = db.execute(
+        update(Offer).where(Offer.id == offer_id, Offer.status == OPEN)
+        .values(status=LOCKED, buyer_id=user.id, updated_at=utc_now())
+    )
+    db.commit()
+    if locked.rowcount != 1:
+        flash(request, "error", "This offer is no longer available. Someone else bought it, or it was cancelled.")
+        return RedirectResponse("/market", status_code=303)
+    db.refresh(offer)
+    seller = db.get(User, offer.seller_id)
+
+    def release(status: str) -> None:
+        offer.status = status
+        offer.buyer_id = None
+        offer.updated_at = utc_now()
+        db.add(offer)
+        db.commit()
+
+    balances = hedera.get_balances(user.account_id)
+    if balances is not None and balances["hbar_tinybar"] < offer.price_tinybar:
+        release(OPEN)
+        flash(request, "error", "You don't have enough HBAR for this offer.")
+        return RedirectResponse("/market", status_code=303)
+
+    try:
+        tx_id = hedera.atomic_swap(
+            hedera.config_id("VKWH_TOKEN_ID"),
+            seller.account_id, decrypt_key(seller.encrypted_key),
+            user.account_id, decrypt_key(user.encrypted_key),
+            offer.amount_mwh, offer.price_tinybar,
+        )
+    except hedera.HederaError as exc:
+        message = str(exc)
+        release(CANCELLED if "INSUFFICIENT_TOKEN_BALANCE" in message else OPEN)
+        flash(request, "error", friendly_swap_error(message))
+        return RedirectResponse("/market", status_code=303)
+
+    offer.status = FILLED
+    offer.tx_id = tx_id
+    offer.updated_at = utc_now()
+    db.add(offer)
+    db.commit()
+    try:
+        hedera.submit_message(hedera.config_id("TRADES_TOPIC_ID"), trade_message(offer, seller, user))
+    except hedera.HederaError:
+        pass   # the trade itself is final on Hedera; the log message is best effort
+    flash(request, "success",
+          f"Bought {format_vkwh(offer.amount_mwh)} VKWH for {format_hbar(offer.price_tinybar)} HBAR "
+          "in ONE Hedera transaction: both transfers succeeded together.",
+          hedera.hashscan_tx(tx_id))
+    return RedirectResponse("/market", status_code=303)
+
+
+@app.post("/offers/{offer_id}/cancel")
+def cancel_offer(request: Request, db: DbSession, user: CurrentUser, offer_id: int):
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    cancelled = db.execute(
+        update(Offer).where(Offer.id == offer_id, Offer.seller_id == user.id, Offer.status == OPEN)
+        .values(status=CANCELLED, updated_at=utc_now())
+    )
+    db.commit()
+    if cancelled.rowcount == 1:
+        flash(request, "success", "Offer cancelled.")
+    else:
+        flash(request, "error", "You can only cancel your own open offers.")
+    return RedirectResponse("/market", status_code=303)
