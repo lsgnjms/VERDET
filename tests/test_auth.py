@@ -23,12 +23,12 @@ def all_users(engine) -> list[User]:
 def test_signup_creates_user_and_logs_in(client, engine, fake_hedera):
     resp = signup(client)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/wallet"
+    assert resp.headers["location"] == "/dashboard"
     assert fake_hedera.accounts_created == 1
     [user] = all_users(engine)
     assert user.account_id == "0.0.999001"
     # Logged in straight away: the wallet opens instead of redirecting.
-    assert client.get("/wallet", follow_redirects=False).status_code == 200
+    assert client.get("/dashboard", follow_redirects=False).status_code == 200
 
 
 def test_signup_stores_only_encrypted_key(client, engine):
@@ -92,7 +92,7 @@ def test_hedera_failure_creates_no_user(client, engine, fake_hedera):
     assert resp.status_code == 503
     assert "try again" in resp.text
     assert all_users(engine) == []
-    assert client.get("/wallet", follow_redirects=False).headers["location"] == "/login"
+    assert client.get("/dashboard", follow_redirects=False).headers["location"] == "/login"
 
 
 # --- Log-in / log-out ------------------------------------------------------
@@ -102,8 +102,8 @@ def test_login_with_right_password(client):
     client.post("/logout")
     resp = client.post("/login", data={"email": "Ada@Example.com", "password": PASSWORD}, follow_redirects=False)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/wallet"
-    assert client.get("/wallet", follow_redirects=False).status_code == 200
+    assert resp.headers["location"] == "/dashboard"
+    assert client.get("/dashboard", follow_redirects=False).status_code == 200
 
 
 def test_login_with_wrong_password_fails(client):
@@ -112,7 +112,7 @@ def test_login_with_wrong_password_fails(client):
     resp = client.post("/login", data={"email": "ada@example.com", "password": "wrong password"})
     assert resp.status_code == 400
     assert "Wrong email or password" in resp.text
-    assert client.get("/wallet", follow_redirects=False).headers["location"] == "/login"
+    assert client.get("/dashboard", follow_redirects=False).headers["location"] == "/login"
 
 
 def test_login_with_unknown_email_gives_same_message(client):
@@ -125,19 +125,19 @@ def test_logout_clears_session(client):
     signup(client)
     resp = client.post("/logout", follow_redirects=False)
     assert resp.headers["location"] == "/login"
-    assert client.get("/wallet", follow_redirects=False).headers["location"] == "/login"
+    assert client.get("/dashboard", follow_redirects=False).headers["location"] == "/login"
 
 
 # --- Wallet card -----------------------------------------------------------
 
 def test_wallet_requires_login(client):
-    assert client.get("/wallet", follow_redirects=False).headers["location"] == "/login"
+    assert client.get("/dashboard", follow_redirects=False).headers["location"] == "/login"
     assert client.get("/wallet/balances").status_code == 401
 
 
 def test_wallet_shows_app_id_and_hashscan_link(client):
     signup(client)
-    html = client.get("/wallet").text
+    html = client.get("/dashboard").text
     assert "0.0.999001" in html
     assert "https://hashscan.io/testnet/account/0.0.999001" in html
 

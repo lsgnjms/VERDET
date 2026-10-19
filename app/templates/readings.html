@@ -1,15 +1,26 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% set active = "readings" %}
 {% block title %}Readings · VERDET{% endblock %}
 {% block content %}
-<div class="flex items-baseline justify-between mb-4">
-  <h1 class="text-xl font-semibold">Readings</h1>
-  <span class="text-xs text-slate-400">Updates every 5 s</span>
+<div class="mb-5 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Readings</h1>
+    <p class="mt-1 text-sm text-muted">Every reading your meter sends, the checks it went through, and its proof on Hedera.</p>
+  </div>
+  <span class="chip border-up/30 bg-up/10 text-up"><span class="live-dot"></span>Live · updates every 5 s</span>
 </div>
-<p class="text-sm text-slate-500 mb-4">
-  Every reading your meters send, accepted or rejected. Each decision is recorded on Hedera; accepted energy earns VKWH, the verified-energy reward token.
-</p>
 
-<div hx-get="/readings/table" hx-trigger="load, every 5s" hx-swap="innerHTML">
-  <p class="text-sm text-slate-400">Loading readings…</p>
+<div class="mb-4 inline-flex rounded-xl border border-ink-700 bg-ink-900 p-1">
+  {% for key, label in [("all", "All"), ("accepted", "Accepted"), ("rejected", "Rejected")] %}
+  <a href="/readings?show={{ key }}"
+     class="rounded-lg px-4 py-1.5 text-sm font-medium transition {{ 'bg-ink-700 text-fg' if show == key else 'text-muted hover:text-fg' }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<div hx-get="/readings/table?show={{ show }}" hx-trigger="load, every 5s" hx-swap="innerHTML">
+  <div class="card space-y-3 p-5">
+    {% for _ in range(5) %}<div class="skeleton h-9 w-full"></div>{% endfor %}
+  </div>
 </div>
 {% endblock %}

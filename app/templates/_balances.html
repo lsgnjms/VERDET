@@ -1,15 +1,23 @@
 {% if balances %}
-<dl class="grid grid-cols-2 gap-4">
-  <div class="rounded-lg bg-slate-50 p-4">
-    <dt class="text-xs text-slate-500 uppercase tracking-wide">HBAR</dt>
-    <dd class="mt-1 font-mono text-xl">{{ balances.hbar_tinybar | hbar }}</dd>
+<div class="fade-in">
+  <div class="label">VKWH balance</div>
+  <div class="mt-1 flex items-baseline gap-2">
+    <span class="num text-4xl font-semibold tracking-tight sm:text-5xl">{{ balances.vkwh_mwh | vkwh }}</span>
+    <span class="text-sm font-semibold text-sun-400">VKWH</span>
   </div>
-  <div class="rounded-lg bg-emerald-50 p-4">
-    <dt class="text-xs text-emerald-700 uppercase tracking-wide">VKWH</dt>
-    <dd class="mt-1 font-mono text-xl">{{ balances.vkwh_mwh | vkwh }}</dd>
-    <p class="mt-1 text-xs text-slate-500">Verified-energy reward token · 1 VKWH = 1 kWh</p>
+  <div class="mt-1 text-sm text-muted">= {{ balances.vkwh_mwh | energy }} of verified solar energy</div>
+  <div class="mt-5 inline-flex items-center gap-3 rounded-xl border border-ink-700 bg-ink-900/70 px-4 py-2.5">
+    <span class="grid h-7 w-7 place-items-center rounded-full bg-ink-800 text-[10px] font-bold text-fg">ℏ</span>
+    <div>
+      <div class="label">HBAR balance</div>
+      <div class="num text-base font-medium">{{ balances.hbar_tinybar | hbar }} <span class="text-xs text-muted">HBAR</span></div>
+    </div>
   </div>
-</dl>
+</div>
 {% else %}
-<p class="text-sm text-slate-500">Balance not available yet. New accounts take a few seconds to appear on the mirror node; this refreshes every 10 s.</p>
+<div class="space-y-3">
+  <div class="skeleton h-4 w-24"></div>
+  <div class="skeleton h-12 w-64"></div>
+  <p class="text-sm text-muted">Balance not available yet. New accounts take a few seconds to appear on the mirror node; this refreshes every 10 s.</p>
+</div>
 {% endif %}

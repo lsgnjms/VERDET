@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% set active = "dashboard" %}
+{% block title %}Dashboard · VERDET{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>{% endblock %}
+{% block content %}
+<div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Overview</h1>
+    <p class="mt-1 text-sm text-muted">Your energy, rewards and meter at a glance.</p>
+  </div>
+  <a href="{{ hashscan_account(user.account_id) }}" target="_blank" rel="noopener" class="btn-ghost text-xs">
+    {{ ui.icon("external", "h-3.5 w-3.5") }}Account {{ user.account_id }} on HashScan</a>
+</div>
+
+<!-- Assets + meter -->
+<div class="grid gap-4 lg:grid-cols-3">
+  <section class="card relative min-w-0 overflow-hidden p-6 lg:col-span-2">
+    <div class="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-sun-500/15 blur-3xl"></div>
+    <div class="relative flex flex-wrap items-start justify-between gap-6">
+      <div id="balances" hx-get="/wallet/balances" hx-trigger="load, every 10s" hx-swap="innerHTML">
+        <div class="space-y-3"><div class="skeleton h-4 w-24"></div><div class="skeleton h-12 w-64"></div><div class="skeleton h-4 w-40"></div></div>
+      </div>
+      <div class="flex gap-2">
+        <a href="/market" class="btn-primary">{{ ui.icon("swap") }}Trade</a>
+        <a href="/readings" class="btn-ghost">{{ ui.icon("list") }}Readings</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="card flex flex-col p-5">
+    <div class="flex items-center justify-between">
+      <span class="label">Your meter</span>
+      {% if status.state == "online" %}<span class="chip border-up/30 bg-up/10 text-up"><span class="live-dot"></span>Online</span>
+      {% elif status.state == "offline" %}<span class="chip border-ink-600 bg-ink-800 text-muted"><span class="live-dot off"></span>Offline</span>
+      {% elif status.state == "waiting" %}<span class="chip border-sun-500/30 bg-sun-500/10 text-sun-400">Waiting for first reading</span>{% endif %}
+    </div>
+    {% if meter %}
+      <div class="mt-3 flex items-center gap-3">
+        <span class="grid h-11 w-11 place-items-center rounded-xl bg-sun-500/10 text-sun-400">{{ ui.icon("cpu", "h-6 w-6") }}</span>
+        <div>
+          <div class="num text-lg font-semibold">{{ meter.meter_id }}</div>
+          <div class="text-xs text-muted">{{ meter.rated_w }} W rated · last seq {{ meter.last_seq if meter.last_seq >= 0 else "—" }}</div>
+        </div>
+      </div>
+      <div class="mt-auto pt-4 text-xs text-muted">
+        {% if status.last_seen %}Last reading {{ status.last_seen | lagos_time }} (Lagos){% else %}No readings yet. Start the bridge or simulator.{% endif %}
+      </div>
+    {% else %}
+      <p class="mt-3 text-sm text-muted">Connect a meter to start earning VKWH for verified solar energy.</p>
+      <a href="/meters" class="btn-primary mt-auto">{{ ui.icon("plus") }}Add your meter</a>
+    {% endif %}
+  </section>
+</div>
+
+<!-- Stats -->
+<div class="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{ ui.stat("Energy today", today.mwh | energy, "accepted readings, Lagos day", "sun", "sun") }}
+  {{ ui.stat("Accepted today", today.accepted, "passed every check", "check", "up") }}
+  {{ ui.stat("Rejected today", today.rejected, "recorded on Hedera too", "shield", "down") }}
+  {{ ui.stat("Rewarded", (rewarded_mwh | vkwh) ~ " VKWH", "all time, minted to you", "bolt", "proof") }}
+</div>
+
+<!-- Live power -->
+<section class="card mt-4 p-5">
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <h2 class="font-semibold">Power</h2>
+      <span class="chip border-up/30 bg-up/10 text-up"><span class="live-dot"></span>LIVE</span>
+    </div>
+    <span class="hidden text-xs text-muted sm:inline">Average watts per accepted reading · last 40</span>
+  </div>
+  <div class="relative mt-4 h-64">
+    <canvas id="power-chart"></canvas>
+    <div id="power-empty" class="absolute inset-0 hidden place-items-center text-sm text-muted">No readings yet.</div>
+  </div>
+</section>
+
+<!-- Recent decisions -->
+<section class="card mt-4">
+  <div class="flex items-center justify-between border-b border-ink-700 px-5 py-4">
+    <h2 class="font-semibold">Latest decisions</h2>
+    <a href="/readings" class="text-sm font-medium text-sun-400 hover:underline">View all</a>
+  </div>
+  {% if recent %}
+  <ul class="divide-y divide-ink-700/70">
+    {% for r in recent %}
+    <li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3">
+      <span class="w-28 text-xs text-muted">{{ r.created_at | lagos_time }}</span>
+      <span class="num w-14 text-xs text-muted">#{{ r.seq }}</span>
+      <span class="num w-24 text-sm">{{ r.mwh | energy }}</span>
+      {{ ui.steps(r) }}
+      <span class="ml-auto flex items-center gap-2">{{ ui.badge(r.decision) }}{% if r.hcs_tx %}{{ ui.proof(hashscan_tx(r.hcs_tx)) }}{% endif %}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {{ ui.empty("No readings yet. Once your meter reports, every decision shows up here, with its proof on Hedera.", "/meters" if not meter else None, "Add your meter") }}
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const canvas = document.getElementById("power-chart");
+    const ctx = canvas.getContext("2d");
+    const fill = ctx.createLinearGradient(0, 0, 0, 256);
+    fill.addColorStop(0, "rgba(247,166,0,.35)");
+    fill.addColorStop(1, "rgba(247,166,0,0)");
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: { labels: [], datasets: [{ data: [], borderColor: "#F7A600", backgroundColor: fill, fill: true,
+        borderWidth: 2, tension: .35, pointRadius: 3, pointHoverRadius: 6 }] },
+      options: {
+        maintainAspectRatio: false, animation: { duration: 500 },
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: "#101418", borderColor: "#262E38", borderWidth: 1,
+          titleColor: "#848E9C", bodyColor: "#EAECEF", displayColors: false,
+          callbacks: { label: (c) => c.parsed.y.toFixed(2) + " W" + (c.raw && c.dataset.ok && !c.dataset.ok[c.dataIndex] ? " · rejected" : "") } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: "#848E9C", maxTicksLimit: 8, font: { family: "JetBrains Mono", size: 10 } } },
+          y: { beginAtZero: true, grid: { color: "rgba(255,255,255,.05)" }, border: { display: false },
+               ticks: { color: "#848E9C", font: { family: "JetBrains Mono", size: 10 }, callback: (v) => v + " W" } },
+        },
+      },
+    });
+    async function refresh() {
+      try {
+        const res = await fetch("/api/me/power");
+        if (!res.ok) return;
+        const { points } = await res.json();
+        document.getElementById("power-empty").style.display = points.length ? "none" : "grid";
+        const ds = chart.data.datasets[0];
+        chart.data.labels = points.map((p) => p.t);
+        ds.data = points.map((p) => p.w);
+        ds.ok = points.map((p) => p.ok);
+        ds.pointBackgroundColor = points.map((p) => (p.ok ? "#F7A600" : "#EF454A"));
+        ds.pointBorderColor = ds.pointBackgroundColor;
+        chart.update();
+      } catch (e) { /* offline: keep the last picture */ }
+    }
+    refresh();
+    setInterval(refresh, 10000);
+  })();
+</script>
+{% endblock %}

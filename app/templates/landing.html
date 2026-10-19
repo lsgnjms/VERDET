@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block title %}VERDET · Verified solar energy on Hedera{% endblock %}
+{% block content %}
+<!-- Hero -->
+<section class="relative -mx-4 overflow-hidden px-4 pb-16 pt-10 sm:pt-16">
+  <div class="pointer-events-none absolute inset-0 bg-grid [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]"></div>
+  <div class="relative mx-auto max-w-3xl text-center">
+    <span class="chip border-proof/30 bg-proof/10 text-proof">
+      <span class="live-dot"></span>Live on Hedera testnet</span>
+    <h1 class="mt-5 text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-6xl">
+      Verified solar energy,<br><span class="text-gradient">rewarded and tradable.</span>
+    </h1>
+    <p class="mx-auto mt-5 max-w-xl text-base text-muted sm:text-lg">
+      A meter signs every reading. VERDET checks it, Hedera records every decision, and verified energy
+      earns VKWH, a verified-energy reward token you can trade for HBAR.
+    </p>
+    <div class="mt-8 flex flex-wrap justify-center gap-3">
+      <a href="/signup" class="btn-primary px-6 py-3 text-base">Get your App ID</a>
+      <a href="/impact" class="btn-ghost px-6 py-3 text-base">{{ ui.icon("globe") }}See the live impact</a>
+    </div>
+  </div>
+
+  <!-- Live numbers -->
+  <div class="relative mx-auto mt-14 grid max-w-4xl grid-cols-2 gap-3 sm:grid-cols-4">
+    {% for label, value in [
+      ("Verified energy", accepted_mwh | energy),
+      ("Decisions on Hedera", anchored_count),
+      ("Fakes rejected", rejected_count),
+      ("Trades settled", trades_count),
+    ] %}
+    <div class="card card-hover p-4 text-center">
+      <div class="num text-2xl font-semibold">{{ value }}</div>
+      <div class="label mt-1">{{ label }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="py-10">
+  <h2 class="text-center text-2xl font-bold tracking-tight">How it works</h2>
+  <p class="mt-2 text-center text-sm text-muted">Four steps from sunlight to a trade, each one checkable on HashScan.</p>
+  <div class="mt-8 grid gap-4 md:grid-cols-4">
+    {% for n, icon_name, title, text in [
+      (1, "key", "The meter signs", "An Arduino meter measures the panel's output and signs each 60-second reading with its own Ed25519 key. The PC relaying it can't forge it."),
+      (2, "shield", "VERDET verifies", "Registered meter? Valid signature? New sequence number? Physically possible? Fakes are rejected with a reason."),
+      (3, "link", "Hedera records", "Every decision, accepted or rejected, is written to a public Hedera Consensus Service topic. Anyone can audit it."),
+      (4, "swap", "Earn and trade", "Accepted energy mints VKWH to the meter owner. Sell it for HBAR: both sides settle in one atomic transaction."),
+    ] %}
+    <div class="card card-hover relative p-5">
+      <span class="absolute right-4 top-4 num text-xs text-muted">0{{ n }}</span>
+      <span class="grid h-10 w-10 place-items-center rounded-xl bg-sun-500/10 text-sun-400">{{ ui.icon(icon_name, "h-5 w-5") }}</span>
+      <h3 class="mt-4 font-semibold">{{ title }}</h3>
+      <p class="mt-1.5 text-sm leading-relaxed text-muted">{{ text }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- The verification pipeline -->
+<section class="py-10">
+  <div class="card overflow-hidden">
+    <div class="grid gap-8 p-6 md:grid-cols-2 md:p-10">
+      <div>
+        <span class="label text-sun-400">Trust-minimized and auditable</span>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight">Every reading runs the same checks</h2>
+        <p class="mt-3 text-sm leading-relaxed text-muted">
+          The order is fixed and every outcome is public. Rejections are recorded too, which proves the
+          checks really run.
+        </p>
+        <div class="mt-5 flex flex-wrap gap-2">
+          {% set topic = config_value("READINGS_TOPIC_ID") %}{% set token = config_value("VKWH_TOKEN_ID") %}
+          {% if topic %}{{ ui.proof(hashscan_topic(topic), "Readings topic " ~ topic) }}{% endif %}
+          {% if token %}{{ ui.proof(hashscan_token(token), "VKWH token " ~ token) }}{% endif %}
+        </div>
+      </div>
+      <ol class="space-y-2.5">
+        {% for name, code, text in [
+          ("Registered", "UNREGISTERED", "The meter ID is on the registry."),
+          ("Signature", "BAD_SIGNATURE", "Signed by that meter's key, unchanged."),
+          ("Sequence", "REPLAY · DUPLICATE", "Newer than the last reading. No resends."),
+          ("Physics", "PHYSICS_LIMIT", "Possible for the panel's rating."),
+          ("AI", "AI_ANOMALY", "Looks like real sunshine, not a lamp."),
+        ] %}
+        <li class="flex items-center gap-3 rounded-xl border border-ink-700 bg-ink-900/60 px-4 py-3">
+          <span class="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-up/40 bg-up/15 text-up">{{ ui.icon("check", "h-3.5 w-3.5") }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium">{{ name }}</div>
+            <div class="text-xs text-muted">{{ text }}</div>
+          </div>
+          <span class="hidden num text-[10px] text-down/80 sm:block">{{ code }}</span>
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="py-10 text-center">
+  <h2 class="text-2xl font-bold tracking-tight">Sign up and get a Hedera account in seconds</h2>
+  <p class="mt-2 text-sm text-muted">No wallet app needed. Your App ID is your Hedera account ID.</p>
+  <a href="/signup" class="btn-primary mt-6 px-6 py-3 text-base">Create an account</a>
+</section>
+{% endblock %}

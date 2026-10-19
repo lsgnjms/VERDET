@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% set active = "impact" %}
+{% block title %}Impact · VERDET{% endblock %}
+{% block content %}
+<div class="mb-8 text-center">
+  <span class="chip border-proof/30 bg-proof/10 text-proof"><span class="live-dot"></span>Public · no login needed</span>
+  <h1 class="mt-4 text-3xl font-extrabold tracking-tight sm:text-5xl">Network <span class="text-gradient">impact</span></h1>
+  <p class="mx-auto mt-3 max-w-xl text-sm text-muted sm:text-base">Every number below comes from decisions recorded on Hedera. Check any of them on HashScan.</p>
+</div>
+
+<!-- Headline numbers -->
+<div class="grid gap-4 md:grid-cols-3">
+  <div class="card card-hover relative overflow-hidden p-6">
+    <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-sun-500/15 blur-2xl"></div>
+    <div class="relative">
+      <span class="grid h-10 w-10 place-items-center rounded-xl bg-sun-500/10 text-sun-400">{{ ui.icon("sun", "h-5 w-5") }}</span>
+      <div class="label mt-4">Verified solar energy</div>
+      <div class="num mt-1 text-3xl font-semibold">{{ accepted_mwh | energy }}</div>
+      <div class="mt-1 text-xs text-muted">{{ accepted_count }} accepted readings · {{ accepted_mwh | vkwh }} VKWH minted</div>
+    </div>
+  </div>
+  <div class="card card-hover relative overflow-hidden p-6">
+    <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-proof/10 blur-2xl"></div>
+    <div class="relative">
+      <span class="grid h-10 w-10 place-items-center rounded-xl bg-proof/10 text-proof">{{ ui.icon("fire", "h-5 w-5") }}</span>
+      <div class="label mt-4">Diesel avoided (estimate)</div>
+      <div class="num mt-1 text-3xl font-semibold">{{ "%.3f" | format(diesel_l) }} <span class="text-base text-muted">L</span></div>
+      <div class="mt-1 text-xs text-muted">if this energy replaced a small diesel generator</div>
+    </div>
+  </div>
+  <div class="card card-hover relative overflow-hidden p-6">
+    <div class="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-up/10 blur-2xl"></div>
+    <div class="relative">
+      <span class="grid h-10 w-10 place-items-center rounded-xl bg-up/10 text-up">{{ ui.icon("cloud", "h-5 w-5") }}</span>
+      <div class="label mt-4">CO₂ avoided (estimate)</div>
+      <div class="num mt-1 text-3xl font-semibold">{{ "%.3f" | format(co2_kg) }} <span class="text-base text-muted">kg</span></div>
+      <div class="mt-1 text-xs text-muted">from the diesel not burned</div>
+    </div>
+  </div>
+</div>
+
+<div class="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{ ui.stat("Decisions on Hedera", anchored_count, "accepted and rejected", "link", "proof") }}
+  {{ ui.stat("Fakes rejected", rejected_count, "each one recorded on-chain", "shield", "down") }}
+  {{ ui.stat("Active meters", active_meters, "reported in the last 24 h · " ~ meters_count ~ " registered", "cpu", "sun") }}
+  {{ ui.stat("Trades settled", trades_count, "one atomic transaction each", "swap", "up") }}
+</div>
+
+<div class="mt-4 grid gap-4 lg:grid-cols-5">
+  <!-- Formula + rejections -->
+  <section class="card p-5 lg:col-span-2">
+    <h2 class="font-semibold">How the estimates are calculated</h2>
+    <div class="mt-3 space-y-2 rounded-xl bg-ink-900 p-4 num text-xs leading-relaxed">
+      <div><span class="text-muted">diesel_L</span> = kWh × <span class="text-sun-400">{{ diesel_factor }}</span> L/kWh</div>
+      <div><span class="text-muted">CO₂_kg</span> &nbsp;= diesel_L × <span class="text-sun-400">{{ co2_factor }}</span> kg/L</div>
+    </div>
+    <p class="mt-3 text-xs leading-relaxed text-muted">
+      {{ diesel_factor }} L/kWh is a typical fuel use for a small diesel generator; {{ co2_factor }} kg is the CO₂ released by burning one litre of diesel.
+      Both factors are configurable and conservative. These are estimates, not certified offsets.
+    </p>
+
+    <h3 class="mt-6 text-sm font-semibold">Rejected, by reason</h3>
+    {% if rejections %}
+    <ul class="mt-3 space-y-2">
+      {% for code, n in rejections | dictsort(by="value", reverse=true) %}
+      <li>
+        <div class="flex justify-between text-xs"><span class="num text-down">{{ code }}</span><span class="num text-muted">{{ n }}</span></div>
+        <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-ink-800"><div class="h-full rounded-full bg-down/70" style="width: {{ (n / rejected_count * 100) | round(1) }}%"></div></div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="mt-2 text-xs text-muted">No rejections yet.</p>{% endif %}
+  </section>
+
+  <!-- Proof feed -->
+  <section class="card lg:col-span-3">
+    <div class="flex items-center justify-between border-b border-ink-700 px-5 py-4">
+      <h2 class="font-semibold">Latest proofs on Hedera</h2>
+      {% set topic = config_value("READINGS_TOPIC_ID") %}
+      {% if topic %}{{ ui.proof(hashscan_topic(topic), "Topic " ~ topic) }}{% endif %}
+    </div>
+    {% if latest_proofs %}
+    <ul class="divide-y divide-ink-700/60">
+      {% for r in latest_proofs %}
+      <li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 text-sm">
+        <span class="w-28 text-xs text-muted">{{ r.created_at | lagos_time }}</span>
+        <span class="num text-xs">{{ r.meter_id }} <span class="text-muted">#{{ r.seq }}</span></span>
+        <span class="num text-xs text-muted">{{ r.mwh | energy }}</span>
+        <span class="ml-auto flex items-center gap-2">
+          {{ ui.badge(r.decision) }}
+          {% if r.reasons %}<span class="num hidden text-[11px] text-down sm:inline">{{ r.reasons }}</span>{% endif %}
+          {{ ui.proof(hashscan_tx(r.hcs_tx)) }}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    {{ ui.empty("No decisions recorded yet.") }}
+    {% endif %}
+    <div class="flex flex-wrap gap-2 border-t border-ink-700 px-5 py-4">
+      {% set token = config_value("VKWH_TOKEN_ID") %}{% set registry = config_value("REGISTRY_TOPIC_ID") %}{% set trades_topic = config_value("TRADES_TOPIC_ID") %}
+      {% if token %}{{ ui.proof(hashscan_token(token), "VKWH token") }}{% endif %}
+      {% if registry %}{{ ui.proof(hashscan_topic(registry), "Registry topic") }}{% endif %}
+      {% if trades_topic %}{{ ui.proof(hashscan_topic(trades_topic), "Trades topic") }}{% endif %}
+    </div>
+  </section>
+</div>
+
+{% if not user %}
+<section class="card mt-8 flex flex-wrap items-center justify-between gap-4 p-6">
+  <div>
+    <h2 class="text-lg font-semibold">Have a solar panel?</h2>
+    <p class="text-sm text-muted">Connect a meter, get verified, earn VKWH.</p>
+  </div>
+  <a href="/signup" class="btn-primary">Get your App ID</a>
+</section>
+{% endif %}
+{% endblock %}

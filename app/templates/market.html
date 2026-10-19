@@ -1,137 +1,238 @@
 {% extends "base.html" %}
-{% block title %}Marketplace · VERDET{% endblock %}
+{% import "_ui.html" as ui with context %}
+{% set active = "market" %}
+{% block title %}Market · VERDET{% endblock %}
 {% block content %}
-<h1 class="text-xl font-semibold mb-1">Marketplace</h1>
-<p class="text-sm text-slate-500 mb-5">
-  Trade VKWH, the verified-energy reward token, for HBAR. Every purchase is <strong>one</strong> Hedera transaction:
-  the VKWH and the HBAR move together, or neither moves.
-</p>
-
-{% if flash %}
-<div class="mb-5 rounded-lg border px-4 py-3 text-sm
-            {{ 'bg-emerald-50 border-emerald-200 text-emerald-900' if flash.kind == 'success' else 'bg-red-50 border-red-200 text-red-800' }}">
-  {{ flash.text }}
-  {% if flash.link %}<a href="{{ flash.link }}" target="_blank" rel="noopener" class="ml-1 font-medium underline">See it on HashScan ↗</a>{% endif %}
-</div>
-{% endif %}
-
-<!-- Sell -->
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 mb-6">
-  <div class="flex flex-wrap items-baseline justify-between gap-2 mb-3">
-    <h2 class="font-semibold">Sell your VKWH</h2>
-    <p class="text-sm text-slate-500">
-      {% if available_mwh is none %}
-        Balance not available right now.
-      {% else %}
-        Available to list: <span class="font-mono text-slate-800">{{ available_mwh | vkwh }} VKWH</span>
-        {% if listed_mwh %}<span class="text-slate-400">({{ listed_mwh | vkwh }} already listed)</span>{% endif %}
-      {% endif %}
-    </p>
+<!-- Pair header / ticker -->
+<section class="card mb-4 flex flex-wrap items-center gap-x-8 gap-y-3 px-5 py-4">
+  <div class="flex items-center gap-3">
+    <div class="flex -space-x-2">
+      <span class="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-sun-400 to-sun-600 text-ink-950 ring-2 ring-ink-850">{{ ui.icon("bolt", "h-4.5 w-4.5") }}</span>
+      <span class="grid h-9 w-9 place-items-center rounded-full bg-ink-700 text-sm font-bold ring-2 ring-ink-850">ℏ</span>
+    </div>
+    <div>
+      <h1 class="text-lg font-bold leading-tight">VKWH<span class="text-muted">/HBAR</span></h1>
+      <p class="text-xs text-muted">Trade VKWH for HBAR.</p>
+    </div>
   </div>
-  <form method="post" action="/offers" class="grid gap-3 sm:grid-cols-[1fr_1fr_auto] items-end">
-    <label class="block">
-      <span class="text-sm font-medium">Amount (VKWH)</span>
-      <input name="amount_vkwh" required inputmode="decimal" placeholder="0.5"
-             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono">
-    </label>
-    <label class="block">
-      <span class="text-sm font-medium">Price (HBAR, total)</span>
-      <input name="price_hbar" required inputmode="decimal" placeholder="2"
-             class="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 font-mono">
-    </label>
-    <button class="rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2">List offer</button>
-  </form>
+  {% set last = ticker.last %}
+  <div>
+    <div class="label">Last price</div>
+    <div class="num text-base font-semibold {{ 'text-up' if last else 'text-muted' }}">{{ (last | price_per_kwh) if last else "—" }} <span class="text-xs font-normal text-muted">HBAR/kWh</span></div>
+  </div>
+  <div>
+    <div class="label">24h volume</div>
+    <div class="num text-base font-semibold">{{ ticker.volume_24h_mwh | vkwh }} <span class="text-xs font-normal text-muted">VKWH</span></div>
+  </div>
+  <div>
+    <div class="label">Open offers</div>
+    <div class="num text-base font-semibold">{{ ticker.open_count }}</div>
+  </div>
+  <div class="ml-auto hidden items-center gap-2 text-xs text-muted lg:flex">
+    {{ ui.icon("shield", "h-4 w-4 text-proof") }}Every trade settles in one atomic Hedera transaction
+  </div>
 </section>
 
-<!-- Buy -->
-<h2 class="font-semibold mb-2">Open offers</h2>
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto">
-  {% if offers %}
-  <table class="w-full text-sm">
-    <thead class="text-left text-slate-500 border-b border-slate-200">
-      <tr>
-        <th class="px-4 py-2 font-medium">Seller</th>
-        <th class="px-4 py-2 font-medium text-right">Amount</th>
-        <th class="px-4 py-2 font-medium text-right">Price</th>
-        <th class="px-4 py-2 font-medium text-right">Per kWh</th>
-        <th class="px-4 py-2"></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for o in offers %}
-      <tr class="border-b border-slate-100 last:border-0">
-        <td class="px-4 py-2 font-mono">{{ users[o.seller_id].account_id }}</td>
-        <td class="px-4 py-2 text-right font-mono">{{ o.amount_mwh | vkwh }} VKWH</td>
-        <td class="px-4 py-2 text-right font-mono">{{ o.price_tinybar | hbar }} HBAR</td>
-        <td class="px-4 py-2 text-right font-mono text-slate-500">{{ o | price_per_kwh }}</td>
-        <td class="px-4 py-2 text-right">
-          <form method="post" action="/offers/{{ o.id }}/buy"
-                onsubmit="const b = this.querySelector('button'); b.disabled = true; b.textContent = 'Buying on Hedera…';">
-            <button class="rounded-md bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white font-medium px-3 py-1.5">Buy</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="px-4 py-6 text-sm text-slate-500">No offers from other users right now.</p>
-  {% endif %}
-</section>
+<div class="grid gap-4 lg:grid-cols-3">
+  <!-- Order book (asks) -->
+  <section class="card overflow-hidden lg:col-span-2">
+    <div class="flex items-center justify-between border-b border-ink-700 px-5 py-3.5">
+      <h2 class="font-semibold">Offers</h2>
+      <span class="text-xs text-muted">Best price first</span>
+    </div>
+    {% if offers %}
+    {% set max_amount = offers | map(attribute="amount_mwh") | max %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="border-b border-ink-700/70">
+          <tr>
+            <th class="th">Price (HBAR/kWh)</th>
+            <th class="th text-right">Amount (VKWH)</th>
+            <th class="th text-right">Total (HBAR)</th>
+            <th class="th hidden sm:table-cell">Seller</th>
+            <th class="th"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in offers %}
+          {% set depth = (o.amount_mwh / max_amount * 100) | round(1) %}
+          <tr class="transition hover:bg-ink-800/60"
+              style="background-image: linear-gradient(to left, rgba(239,69,74,.09) {{ depth }}%, transparent {{ depth }}%)">
+            <td class="td num font-medium text-down">{{ o | price_per_kwh }}</td>
+            <td class="td num text-right">{{ o.amount_mwh | vkwh }}</td>
+            <td class="td num text-right">{{ o.price_tinybar | hbar }}</td>
+            <td class="td num hidden text-xs text-muted sm:table-cell">{{ users[o.seller_id].account_id }}</td>
+            <td class="td text-right">
+              <button type="button" class="btn rounded-md bg-up/90 px-3 py-1.5 text-xs text-white hover:bg-up"
+                      onclick="market.confirmBuy({{ o.id }}, '{{ o.amount_mwh | vkwh }}', '{{ o.price_tinybar | hbar }}', '{{ o | price_per_kwh }}', '{{ users[o.seller_id].account_id }}')">Buy</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ ui.empty("No offers from other users right now. List yours, or check back soon.") }}
+    {% endif %}
+  </section>
 
-<!-- My offers -->
-{% if my_offers %}
-<h2 class="font-semibold mb-2">Your offers</h2>
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-x-auto">
-  <table class="w-full text-sm">
-    <tbody>
+  <!-- Sell panel -->
+  <section class="card p-5">
+    <div class="mb-4 inline-flex w-full rounded-lg bg-ink-900 p-1">
+      <span class="flex-1 rounded-md bg-down/90 py-1.5 text-center text-sm font-semibold text-white">Sell VKWH</span>
+    </div>
+    <div class="mb-4 flex items-center justify-between text-xs">
+      <span class="text-muted">Available</span>
+      <span class="num">
+        {% if available_mwh is none %}<span class="text-muted">unavailable</span>
+        {% else %}{{ available_mwh | vkwh }} VKWH{% endif %}
+      </span>
+    </div>
+    {% if listed_mwh %}<p class="-mt-3 mb-4 text-right text-[11px] text-muted">{{ listed_mwh | vkwh }} already listed</p>{% endif %}
+    <form method="post" action="/offers" class="space-y-3" oninput="market.preview()">
+      <label class="block">
+        <span class="label">Amount</span>
+        <div class="relative mt-1.5">
+          <input id="sell-amount" name="amount_vkwh" required inputmode="decimal" placeholder="0.001" class="input num pr-16">
+          <span class="absolute inset-y-0 right-3 flex items-center text-xs text-muted">VKWH</span>
+        </div>
+      </label>
+      <div class="grid grid-cols-4 gap-1.5">
+        {% for pct in [25, 50, 75, 100] %}
+        <button type="button" onclick="market.fill({{ pct }})"
+                class="rounded-md border border-ink-700 py-1 text-xs text-muted transition hover:border-sun-500/50 hover:text-sun-400">{{ "Max" if pct == 100 else pct ~ "%" }}</button>
+        {% endfor %}
+      </div>
+      <label class="block">
+        <span class="label">Total price</span>
+        <div class="relative mt-1.5">
+          <input id="sell-price" name="price_hbar" required inputmode="decimal" placeholder="2" class="input num pr-16">
+          <span class="absolute inset-y-0 right-3 flex items-center text-xs text-muted">HBAR</span>
+        </div>
+      </label>
+      <div class="flex items-center justify-between rounded-lg bg-ink-900 px-3 py-2 text-xs">
+        <span class="text-muted">Price per kWh</span>
+        <span id="sell-unit" class="num text-fg">—</span>
+      </div>
+      <button class="btn w-full bg-down py-2.5 text-white hover:bg-down/90">List offer</button>
+    </form>
+  </section>
+</div>
+
+<!-- Your offers / market trades -->
+<section class="card mt-4">
+  <div class="flex gap-6 border-b border-ink-700 px-5">
+    <button type="button" data-tab="trades" onclick="market.tab('trades')" class="tab-btn -mb-px border-b-2 border-sun-500 py-3.5 text-sm font-semibold">Market trades</button>
+    <button type="button" data-tab="mine" onclick="market.tab('mine')" class="tab-btn -mb-px border-b-2 border-transparent py-3.5 text-sm font-semibold text-muted">
+      Your offers{% if my_offers %} <span class="ml-1 rounded-full bg-ink-700 px-1.5 text-[11px]">{{ my_offers | length }}</span>{% endif %}</button>
+  </div>
+
+  <div data-panel="trades">
+    {% if trades %}
+    <div class="overflow-x-auto">
+      <table class="w-full min-w-[640px] text-sm">
+        <thead class="border-b border-ink-700/70">
+          <tr>
+            <th class="th">Time (Lagos)</th>
+            <th class="th">Seller → Buyer</th>
+            <th class="th text-right">Price (HBAR/kWh)</th>
+            <th class="th text-right">VKWH</th>
+            <th class="th text-right">HBAR</th>
+            <th class="th">Proof</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-ink-700/60">
+          {% for t in trades %}
+          <tr class="transition hover:bg-ink-800/50">
+            <td class="td whitespace-nowrap text-xs text-muted">{{ t.updated_at | lagos_time }}</td>
+            <td class="td num whitespace-nowrap text-xs">{{ users[t.seller_id].account_id }} → {{ users[t.buyer_id].account_id }}</td>
+            <td class="td num text-right text-up">{{ t | price_per_kwh }}</td>
+            <td class="td num text-right">{{ t.amount_mwh | vkwh }}</td>
+            <td class="td num text-right">{{ t.price_tinybar | hbar }}</td>
+            <td class="td">{{ ui.proof(hashscan_tx(t.tx_id), "1 tx") }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    {{ ui.empty("No trades yet. The first one will show here, with its single Hedera transaction.") }}
+    {% endif %}
+  </div>
+
+  <div data-panel="mine" class="hidden">
+    {% if my_offers %}
+    <ul class="divide-y divide-ink-700/60">
       {% for o in my_offers %}
-      <tr class="border-b border-slate-100 last:border-0">
-        <td class="px-4 py-2 font-mono">{{ o.amount_mwh | vkwh }} VKWH</td>
-        <td class="px-4 py-2 font-mono">{{ o.price_tinybar | hbar }} HBAR</td>
-        <td class="px-4 py-2 text-slate-500">{{ "being bought…" if o.status == "locked" else "open" }}</td>
-        <td class="px-4 py-2 text-right">
-          {% if o.status == "open" %}
-          <form method="post" action="/offers/{{ o.id }}/cancel">
-            <button class="text-sm text-slate-600 hover:text-red-700 underline">Cancel</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
+      <li class="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3 text-sm">
+        <span class="num">{{ o.amount_mwh | vkwh }} <span class="text-xs text-muted">VKWH</span></span>
+        <span class="num">{{ o.price_tinybar | hbar }} <span class="text-xs text-muted">HBAR</span></span>
+        <span class="num text-xs text-muted">{{ o | price_per_kwh }} HBAR/kWh</span>
+        {% if o.status == "locked" %}<span class="chip border-sun-500/30 bg-sun-500/10 text-sun-400">being bought…</span>
+        {% else %}<span class="chip border-ink-600 bg-ink-800 text-muted">open</span>{% endif %}
+        {% if o.status == "open" %}
+        <form method="post" action="/offers/{{ o.id }}/cancel" class="ml-auto">
+          <button class="text-xs font-medium text-muted transition hover:text-down">Cancel</button>
+        </form>
+        {% endif %}
+      </li>
       {% endfor %}
-    </tbody>
-  </table>
+    </ul>
+    {% else %}
+    {{ ui.empty("You have no open offers.") }}
+    {% endif %}
+  </div>
 </section>
-{% endif %}
 
-<!-- History -->
-<h2 class="font-semibold mb-2">Recent trades</h2>
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
-  {% if trades %}
-  <table class="w-full text-sm">
-    <thead class="text-left text-slate-500 border-b border-slate-200">
-      <tr>
-        <th class="px-4 py-2 font-medium">Time (Lagos)</th>
-        <th class="px-4 py-2 font-medium">Seller → Buyer</th>
-        <th class="px-4 py-2 font-medium text-right">VKWH</th>
-        <th class="px-4 py-2 font-medium text-right">HBAR</th>
-        <th class="px-4 py-2 font-medium">Proof</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for t in trades %}
-      <tr class="border-b border-slate-100 last:border-0">
-        <td class="px-4 py-2 whitespace-nowrap text-slate-600">{{ t.updated_at | lagos_time }}</td>
-        <td class="px-4 py-2 font-mono whitespace-nowrap">{{ users[t.seller_id].account_id }} → {{ users[t.buyer_id].account_id }}</td>
-        <td class="px-4 py-2 text-right font-mono">{{ t.amount_mwh | vkwh }}</td>
-        <td class="px-4 py-2 text-right font-mono">{{ t.price_tinybar | hbar }}</td>
-        <td class="px-4 py-2"><a href="{{ hashscan_tx(t.tx_id) }}" target="_blank" rel="noopener" class="text-emerald-700 underline">1 tx ↗</a></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="px-4 py-6 text-sm text-slate-500">No trades yet.</p>
-  {% endif %}
-</section>
+<!-- Buy confirmation -->
+<dialog id="buy-dialog" class="w-[min(92vw,26rem)] rounded-2xl border border-ink-700 bg-ink-900 p-0 text-fg backdrop:bg-black/70 backdrop:backdrop-blur-sm">
+  <form method="post" id="buy-form" class="p-6">
+    <h3 class="text-lg font-semibold">Confirm purchase</h3>
+    <dl class="mt-4 space-y-2.5 rounded-xl bg-ink-850 p-4 text-sm">
+      <div class="flex justify-between"><dt class="text-muted">You receive</dt><dd class="num font-medium text-up"><span id="buy-amount"></span> VKWH</dd></div>
+      <div class="flex justify-between"><dt class="text-muted">You pay</dt><dd class="num font-medium"><span id="buy-price"></span> HBAR</dd></div>
+      <div class="flex justify-between"><dt class="text-muted">Price per kWh</dt><dd class="num text-muted"><span id="buy-unit"></span> HBAR</dd></div>
+      <div class="flex justify-between"><dt class="text-muted">Seller</dt><dd class="num text-muted" id="buy-seller"></dd></div>
+    </dl>
+    <p class="mt-3 flex gap-2 text-xs text-muted">{{ ui.icon("shield", "h-4 w-4 shrink-0 text-proof") }}Both transfers happen in one Hedera transaction: you get the VKWH and the seller gets the HBAR, or nothing moves.</p>
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" class="btn-ghost" onclick="this.closest('dialog').close()">Cancel</button>
+      <button id="buy-submit" class="btn bg-up text-white hover:bg-up/90"
+              onclick="this.disabled = true; this.innerHTML = '<span class=&quot;h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white&quot;></span>Settling on Hedera…'; this.form.submit();">Buy now</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const market = {
+    availableMwh: {{ available_mwh if available_mwh is not none else 0 }},
+    fill(pct) {
+      const mwh = Math.floor(this.availableMwh * pct / 100);
+      document.getElementById("sell-amount").value = (mwh / 1e6).toFixed(6);
+      this.preview();
+    },
+    preview() {
+      const a = parseFloat(document.getElementById("sell-amount").value);
+      const p = parseFloat(document.getElementById("sell-price").value);
+      document.getElementById("sell-unit").textContent = a > 0 && p > 0 ? (p / a).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " HBAR" : "—";
+    },
+    confirmBuy(id, amount, price, unit, seller) {
+      document.getElementById("buy-form").action = "/offers/" + id + "/buy";
+      document.getElementById("buy-amount").textContent = amount;
+      document.getElementById("buy-price").textContent = price;
+      document.getElementById("buy-unit").textContent = unit;
+      document.getElementById("buy-seller").textContent = seller;
+      document.getElementById("buy-dialog").showModal();
+    },
+    tab(name) {
+      document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== name));
+      document.querySelectorAll(".tab-btn").forEach((b) => {
+        const on = b.dataset.tab === name;
+        b.classList.toggle("border-sun-500", on); b.classList.toggle("border-transparent", !on); b.classList.toggle("text-muted", !on);
+      });
+    },
+  };
+</script>
 {% endblock %}

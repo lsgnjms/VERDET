@@ -43,6 +43,12 @@ MIN_PASSWORD_LENGTH = 8
 MAX_RATED_W = 10_000          # prototype: small DC panels only
 READINGS_SHOWN = 50           # rows in the readings table
 LAGOS = timezone(timedelta(hours=1))   # WAT, no daylight saving
+DEFAULT_LAT, DEFAULT_LON = 6.52, 3.38  # meters are sited in Lagos (no location field in the form)
+ONLINE_SECONDS = 180          # a meter is "online" if it reported in the last 3 minutes
+NEW_ROW_SECONDS = 6           # readings younger than this flash in the table
+# Impact estimates (shown with their formula on /impact; override in .env).
+DIESEL_L_PER_KWH = float(os.getenv("DIESEL_L_PER_KWH", "0.3"))   # small diesel generator, typical
+CO2_KG_PER_L = float(os.getenv("CO2_KG_PER_L", "2.68"))          # CO2 from burning 1 L of diesel
 
 
 def _session_secret() -> str:
@@ -85,11 +91,42 @@ def format_lagos_time(moment: datetime) -> str:
     return moment.astimezone(LAGOS).strftime("%d %b %H:%M:%S")
 
 
+def format_energy(mwh: int) -> str:
+    """Pick a readable unit: 167 mWh, 1.24 Wh, 1.235 kWh."""
+    if mwh < 1_000:
+        return f"{mwh} mWh"
+    if mwh < 1_000_000:
+        return f"{mwh / 1_000:,.2f} Wh"
+    return f"{mwh / 1_000_000:,.3f} kWh"
+
+
+def as_utc(moment: datetime) -> datetime:
+    """Timezone-aware UTC. SQLite hands back naive UTC times; queries need aware ones."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def failed_step(reasons: str) -> int | None:
+    """Which verification step (0-4) a rejection failed at; None if accepted."""
+    steps = {"UNREGISTERED": 0, "BAD_SIGNATURE": 1, "REPLAY": 2, "DUPLICATE": 2,
+             "PHYSICS_LIMIT": 3, "AI_ANOMALY": 4}
+    for code in reasons.split(","):
+        if code in steps:
+            return steps[code]
+    return None
+
+
 templates.env.filters["vkwh"] = format_vkwh
 templates.env.filters["hbar"] = format_hbar
 templates.env.filters["lagos_time"] = format_lagos_time
+templates.env.filters["energy"] = format_energy
+templates.env.filters["failed_step"] = failed_step
 templates.env.globals["hashscan_account"] = hedera.hashscan_account
 templates.env.globals["hashscan_tx"] = hedera.hashscan_tx
+templates.env.globals["hashscan_topic"] = hedera.hashscan_topic
+templates.env.globals["hashscan_token"] = hedera.hashscan_token
+templates.env.globals["config_value"] = lambda name: os.getenv(name, "")
 
 CurrentUser = Annotated[User | None, Depends(current_user)]
 DbSession = Annotated[Session, Depends(get_session)]
@@ -97,15 +134,18 @@ DbSession = Annotated[Session, Depends(get_session)]
 
 # --- Pages ------------------------------------------------------------------
 
-@app.get("/")
-def home(user: CurrentUser) -> RedirectResponse:
-    return RedirectResponse("/wallet" if user else "/login", status_code=303)
+@app.get("/", response_class=HTMLResponse)
+def landing(request: Request, db: DbSession, user: CurrentUser):
+    """Public landing page. Logged-in users go straight to their dashboard."""
+    if user:
+        return RedirectResponse("/dashboard", status_code=303)
+    return templates.TemplateResponse(request, "landing.html", {"user": None, **impact_stats(db)})
 
 
 @app.get("/signup", response_class=HTMLResponse)
 def signup_page(request: Request, user: CurrentUser):
     if user:
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/dashboard", status_code=303)
     return templates.TemplateResponse(request, "signup.html", {"user": None})
 
 
@@ -151,13 +191,13 @@ def signup(
         return show_error("An account with this email already exists. Log in instead.", 400)
     db.refresh(user)
     log_in(request, user)
-    return RedirectResponse("/wallet", status_code=303)
+    return RedirectResponse("/dashboard", status_code=303)
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, user: CurrentUser):
     if user:
-        return RedirectResponse("/wallet", status_code=303)
+        return RedirectResponse("/dashboard", status_code=303)
     return templates.TemplateResponse(request, "login.html", {"user": None})
 
 
@@ -177,7 +217,7 @@ def login(
             status_code=400,
         )
     log_in(request, user)
-    return RedirectResponse("/wallet", status_code=303)
+    return RedirectResponse("/dashboard", status_code=303)
 
 
 @app.post("/logout")
@@ -186,11 +226,76 @@ def logout(request: Request) -> RedirectResponse:
     return RedirectResponse("/login", status_code=303)
 
 
-@app.get("/wallet", response_class=HTMLResponse)
-def wallet(request: Request, user: CurrentUser):
+@app.get("/wallet")
+def wallet() -> RedirectResponse:
+    """Old URL: the wallet card now lives on the dashboard."""
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+def user_meter(db: Session, user: User) -> Meter | None:
+    """Each account has at most one meter."""
+    return db.exec(select(Meter).where(Meter.owner_id == user.id)).first()
+
+
+def meter_status(db: Session, meter: Meter | None) -> dict:
+    """Online if the meter reported recently; when it was last seen."""
+    if meter is None:
+        return {"state": "none", "last_seen": None}
+    last = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id).order_by(Reading.id.desc())).first()
+    if last is None:
+        return {"state": "waiting", "last_seen": None}
+    age = datetime.now(timezone.utc) - as_utc(last.created_at)
+    return {"state": "online" if age.total_seconds() <= ONLINE_SECONDS else "offline", "last_seen": last.created_at}
+
+
+def dashboard_context(db: Session, user: User) -> dict:
+    meter = user_meter(db, user)
+    midnight = datetime.now(LAGOS).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = {"accepted": 0, "rejected": 0, "mwh": 0}
+    rewarded_mwh = 0
+    recent: list[Reading] = []
+    if meter:
+        rows = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id,
+                                             Reading.created_at >= as_utc(midnight))).all()
+        for r in rows:
+            today[r.decision] = today.get(r.decision, 0) + 1
+            if r.decision == "accepted":
+                today["mwh"] += r.mwh
+        rewarded_mwh = db.exec(
+            select(func.coalesce(func.sum(Reading.mwh), 0))
+            .where(Reading.meter_id == meter.meter_id, Reading.mint_tx.is_not(None))
+        ).one()
+        recent = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id)
+                         .order_by(Reading.id.desc()).limit(5)).all()
+    return {"user": user, "meter": meter, "status": meter_status(db, meter), "today": today,
+            "rewarded_mwh": rewarded_mwh, "recent": recent}
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, db: DbSession, user: CurrentUser):
     if not user:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "wallet.html", {"user": user})
+    return templates.TemplateResponse(request, "dashboard.html", dashboard_context(db, user))
+
+
+@app.get("/api/me/power")
+def my_power(db: DbSession, user: CurrentUser) -> JSONResponse:
+    """Average power of the last 40 accepted readings from the user's meter, for the live chart.
+    Rejected readings aren't trustworthy measurements, so they aren't plotted."""
+    if not user:
+        return JSONResponse({"error": "login required"}, status_code=401)
+    meter = user_meter(db, user)
+    if meter is None:
+        return JSONResponse({"points": []})
+    rows = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id, Reading.decision == "accepted")
+                   .order_by(Reading.id.desc()).limit(40)).all()
+    points = []
+    for r in reversed(rows):
+        window_ms = max(r.t_end_ms - r.t_start_ms, 1)
+        avg_w = r.mwh * 3_600_000 / window_ms / 1000      # mWh over the window -> average watts
+        points.append({"t": format_lagos_time(r.created_at)[-8:-3], "w": round(avg_w, 2),
+                       "ok": r.decision == "accepted"})
+    return JSONResponse({"points": points})
 
 
 @app.get("/wallet/balances", response_class=HTMLResponse)
@@ -204,14 +309,21 @@ def wallet_balances(request: Request, user: CurrentUser):
 
 # --- Readings page ------------------------------------------------------------
 
-def user_readings_context(db: Session, user: User) -> dict:
+READING_FILTERS = ("all", "accepted", "rejected")
+
+
+def user_readings_context(db: Session, user: User, show: str = "all") -> dict:
     """The latest readings from this user's meters, plus accepted totals."""
+    show = show if show in READING_FILTERS else "all"
     meter_ids = list(db.exec(select(Meter.meter_id).where(Meter.owner_id == user.id)))
     if not meter_ids:
-        return {"readings": [], "accepted_mwh": 0, "accepted_count": 0, "has_meters": False}
-    readings = db.exec(
-        select(Reading).where(Reading.meter_id.in_(meter_ids)).order_by(Reading.id.desc()).limit(READINGS_SHOWN)
-    ).all()
+        return {"readings": [], "accepted_mwh": 0, "accepted_count": 0, "has_meters": False, "show": show}
+    query = select(Reading).where(Reading.meter_id.in_(meter_ids))
+    if show != "all":
+        query = query.where(Reading.decision == show)
+    readings = db.exec(query.order_by(Reading.id.desc()).limit(READINGS_SHOWN)).all()
+    fresh_after = datetime.now(timezone.utc) - timedelta(seconds=NEW_ROW_SECONDS)
+    new_ids = {r.id for r in readings if as_utc(r.created_at) >= fresh_after}
     accepted_mwh, accepted_count = db.exec(
         select(func.coalesce(func.sum(Reading.mwh), 0), func.count(Reading.id))
         .where(Reading.meter_id.in_(meter_ids), Reading.decision == "accepted")
@@ -222,34 +334,36 @@ def user_readings_context(db: Session, user: User) -> dict:
         .where(Reading.meter_id.in_(meter_ids), Reading.decision == "accepted", Reading.mint_tx.is_not(None))
     ).one()
     return {"readings": readings, "accepted_mwh": accepted_mwh, "accepted_count": accepted_count,
-            "rewarded_mwh": rewarded_mwh, "has_meters": True}
+            "rewarded_mwh": rewarded_mwh, "has_meters": True, "show": show, "new_ids": new_ids}
 
 
 @app.get("/readings", response_class=HTMLResponse)
-def readings_page(request: Request, user: CurrentUser):
+def readings_page(request: Request, user: CurrentUser, show: str = "all"):
     if not user:
         return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse(request, "readings.html", {"user": user})
+    show = show if show in READING_FILTERS else "all"
+    return templates.TemplateResponse(request, "readings.html", {"user": user, "show": show})
 
 
 @app.get("/readings/table", response_class=HTMLResponse)
-def readings_table(request: Request, db: DbSession, user: CurrentUser):
+def readings_table(request: Request, db: DbSession, user: CurrentUser, show: str = "all"):
     """HTMX partial: the readings table, refreshed every 5 s."""
     if not user:
         return Response(status_code=401)
-    return templates.TemplateResponse(request, "_readings_table.html", user_readings_context(db, user))
+    return templates.TemplateResponse(request, "_readings_table.html", user_readings_context(db, user, show))
 
 
 # --- Meters -----------------------------------------------------------------
 
-def parse_meter_form(meter_id: str, pubkey_hex: str, rated_w: str, lat: str, lon: str) -> tuple[dict, str | None]:
+SIGNATURE_PASSED = ("REPLAY", "DUPLICATE", "PHYSICS_LIMIT", "AI_ANOMALY")
+
+
+def parse_meter_form(meter_id: str, pubkey_hex: str, rated_w: str) -> tuple[dict, str | None]:
     """Clean up the Add-meter form. Returns (values, error message or None)."""
     values = {
         "meter_id": meter_id.strip(),
         "pubkey_hex": pubkey_hex.strip().lower(),
         "rated_w": rated_w.strip(),
-        "lat": lat.strip(),
-        "lon": lon.strip(),
     }
     if not METER_ID_PATTERN.match(values["meter_id"]):
         return values, "Meter ID must be 1-32 letters, digits or dashes (e.g. VD-0001)."
@@ -258,29 +372,44 @@ def parse_meter_form(meter_id: str, pubkey_hex: str, rated_w: str, lat: str, lon
         return values, "Public key must be the 64 hex characters the meter prints as PUB."
     try:
         rated = int(values["rated_w"])
-        lat_f, lon_f = float(values["lat"]), float(values["lon"])
     except ValueError:
-        return values, "Rated watts must be a whole number; latitude and longitude must be numbers."
+        return values, "Rated watts must be a whole number."
     if not 1 <= rated <= MAX_RATED_W:
         return values, f"Rated watts must be between 1 and {MAX_RATED_W}."
-    if not (-90 <= lat_f <= 90 and -180 <= lon_f <= 180):
-        return values, "Latitude must be -90 to 90 and longitude -180 to 180."
-    values.update(rated_w=rated, lat=lat_f, lon=lon_f)
+    values["rated_w"] = rated
     return values, None
 
 
-def registry_message(meter: Meter, owner_account: str) -> str:
+def registry_message(meter: Meter, owner_account: str, event: str = "meter.register") -> str:
     """The `registry` HCS message (Plan.md schema), compact JSON, under 1 KB."""
-    return json.dumps(
-        {"t": "meter.register", "v": 1, "meterId": meter.meter_id, "owner": owner_account,
-         "pubKey": meter.pubkey_hex, "ratedW": meter.rated_w, "lat": meter.lat, "lon": meter.lon},
-        separators=(",", ":"),
-    )
+    msg = {"t": event, "v": 1, "meterId": meter.meter_id, "owner": owner_account}
+    if event == "meter.register":
+        msg.update(pubKey=meter.pubkey_hex, ratedW=meter.rated_w, lat=meter.lat, lon=meter.lon)
+    return json.dumps(msg, separators=(",", ":"))
+
+
+def previous_last_seq(db: Session, meter_id: str) -> int:
+    """If this meter ID was registered before, continue from its highest genuine seq,
+    so old signed readings can't be replayed for a second reward after re-registering."""
+    return db.exec(
+        select(func.coalesce(func.max(Reading.seq), -1)).where(
+            Reading.meter_id == meter_id,
+            (Reading.decision == "accepted") | Reading.reasons.in_(SIGNATURE_PASSED),
+        )
+    ).one()
 
 
 def render_meters(request: Request, db: Session, user: User, status: int = 200, **extra):
-    meters = db.exec(select(Meter).where(Meter.owner_id == user.id).order_by(Meter.created_at)).all()
-    context = {"user": user, "meters": meters, "form": {"lat": "6.52", "lon": "3.38"}, **extra}
+    meter = user_meter(db, user)
+    context = {"user": user, "meter": meter, "status": meter_status(db, meter), "form": {}, **extra}
+    if meter:
+        midnight = datetime.now(LAGOS).replace(hour=0, minute=0, second=0, microsecond=0)
+        context["today_mwh"] = db.exec(
+            select(func.coalesce(func.sum(Reading.mwh), 0)).where(
+                Reading.meter_id == meter.meter_id, Reading.decision == "accepted",
+                Reading.created_at >= as_utc(midnight))
+        ).one()
+    context["flash"] = context.get("flash") or request.session.pop("flash", None)
     return templates.TemplateResponse(request, "meters.html", context, status_code=status)
 
 
@@ -299,12 +428,13 @@ def add_meter(
     meter_id: Annotated[str, Form()],
     pubkey_hex: Annotated[str, Form()],
     rated_w: Annotated[str, Form()],
-    lat: Annotated[str, Form()],
-    lon: Annotated[str, Form()],
 ):
     if not user:
         return RedirectResponse("/login", status_code=303)
-    values, error = parse_meter_form(meter_id, pubkey_hex, rated_w, lat, lon)
+    if user_meter(db, user):
+        return render_meters(request, db, user, 400,
+                             error="You already have a meter. Disconnect it first to add another one.")
+    values, error = parse_meter_form(meter_id, pubkey_hex, rated_w)
     if error:
         return render_meters(request, db, user, 400, error=error, form=values)
     # Check before calling Hedera, so a rejected form never costs a fee.
@@ -316,7 +446,8 @@ def add_meter(
             error="That public key is already registered to another meter. One device, one meter.",
         )
 
-    meter = Meter(owner_id=user.id, **values)
+    meter = Meter(owner_id=user.id, lat=DEFAULT_LAT, lon=DEFAULT_LON,
+                  last_seq=previous_last_seq(db, values["meter_id"]), **values)
     try:
         tx_id = hedera.submit_message(hedera.config_id("REGISTRY_TOPIC_ID"), registry_message(meter, user.account_id))
     except hedera.HederaError as exc:
@@ -328,7 +459,32 @@ def add_meter(
     except IntegrityError:
         db.rollback()
         return render_meters(request, db, user, 400, error="That meter ID is already registered.", form=values)
-    return render_meters(request, db, user, success=meter.meter_id, registry_url=hedera.hashscan_tx(tx_id))
+    flash(request, "success", f"Meter {meter.meter_id} registered and recorded on Hedera.", hedera.hashscan_tx(tx_id))
+    return RedirectResponse("/meters", status_code=303)
+
+
+@app.post("/meters/disconnect")
+def disconnect_meter(request: Request, db: DbSession, user: CurrentUser):
+    """Remove the user's meter (recorded on the registry topic). Its readings stay
+    in the history; the same meter ID can be registered again later."""
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    meter = user_meter(db, user)
+    if meter is None:
+        flash(request, "error", "You don't have a meter to disconnect.")
+        return RedirectResponse("/meters", status_code=303)
+    try:
+        tx_id = hedera.submit_message(
+            hedera.config_id("REGISTRY_TOPIC_ID"), registry_message(meter, user.account_id, "meter.disconnect")
+        )
+    except hedera.HederaError as exc:
+        flash(request, "error", f"Couldn't record the disconnect on Hedera: {exc}")
+        return RedirectResponse("/meters", status_code=303)
+    db.delete(meter)
+    db.commit()
+    flash(request, "success", f"Meter {meter.meter_id} disconnected. You can add a meter again.",
+          hedera.hashscan_tx(tx_id))
+    return RedirectResponse("/meters", status_code=303)
 
 
 # --- Readings API -----------------------------------------------------------
@@ -520,10 +676,16 @@ def market_context(db: Session, user: User) -> dict:
     balances = hedera.get_balances(user.account_id)
     listed = listed_mwh(db, user)
     available = max(balances["vkwh_mwh"] - listed, 0) if balances else None
+    others = [o for o in open_offers if o.seller_id != user.id]
+    # Order book: cheapest HBAR per kWh first, like an exchange's ask side.
+    others.sort(key=lambda o: Decimal(o.price_tinybar) / Decimal(o.amount_mwh))
+    day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    volume_24h = sum(t.amount_mwh for t in trades if as_utc(t.updated_at) >= day_ago)
     return {
         "user": user, "users": users, "balances": balances, "listed_mwh": listed, "available_mwh": available,
-        "offers": [o for o in open_offers if o.seller_id != user.id],
-        "my_offers": my_offers, "trades": trades,
+        "offers": others, "my_offers": my_offers, "trades": trades,
+        "ticker": {"last": trades[0] if trades else None, "volume_24h_mwh": volume_24h,
+                   "open_count": len(open_offers)},
     }
 
 
@@ -650,3 +812,40 @@ def cancel_offer(request: Request, db: DbSession, user: CurrentUser, offer_id: i
     else:
         flash(request, "error", "You can only cancel your own open offers.")
     return RedirectResponse("/market", status_code=303)
+
+
+# --- Impact (public) ------------------------------------------------------------
+
+def impact_stats(db: Session) -> dict:
+    """Network-wide numbers for the landing and impact pages. Everything here is
+    also derivable from the public HCS topics."""
+    accepted_mwh, accepted_count = db.exec(
+        select(func.coalesce(func.sum(Reading.mwh), 0), func.count(Reading.id)).where(Reading.decision == "accepted")
+    ).one()
+    rejections = dict(db.exec(
+        select(Reading.reasons, func.count(Reading.id)).where(Reading.decision == "rejected").group_by(Reading.reasons)
+    ).all())
+    anchored = db.exec(select(func.count(Reading.id)).where(Reading.hcs_tx.is_not(None))).one()
+    day_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    active_meters = db.exec(
+        select(func.count(func.distinct(Reading.meter_id)))
+        .where(Reading.created_at >= day_ago, Reading.meter_id.in_(select(Meter.meter_id)))
+    ).one()
+    trades = db.exec(select(func.count(Offer.id)).where(Offer.status == FILLED)).one()
+    latest = db.exec(select(Reading).where(Reading.hcs_tx.is_not(None)).order_by(Reading.id.desc()).limit(8)).all()
+    kwh = accepted_mwh / 1_000_000
+    diesel_l = kwh * DIESEL_L_PER_KWH
+    return {
+        "accepted_mwh": accepted_mwh, "accepted_count": accepted_count,
+        "rejected_count": sum(rejections.values()), "rejections": rejections,
+        "anchored_count": anchored, "meters_count": db.exec(select(func.count(Meter.id))).one(),
+        "active_meters": active_meters, "trades_count": trades, "latest_proofs": latest,
+        "diesel_l": diesel_l, "co2_kg": diesel_l * CO2_KG_PER_L,
+        "diesel_factor": DIESEL_L_PER_KWH, "co2_factor": CO2_KG_PER_L,
+    }
+
+
+@app.get("/impact", response_class=HTMLResponse)
+def impact_page(request: Request, db: DbSession, user: CurrentUser):
+    """Public: no login needed."""
+    return templates.TemplateResponse(request, "impact.html", {"user": user, **impact_stats(db)})

@@ -1,65 +1,68 @@
+{% import "_ui.html" as ui with context %}
 {% if not has_meters %}
-<p class="text-sm text-slate-500">You have no meters yet. <a href="/meters" class="text-emerald-700 underline">Register one</a> to start.</p>
+<div class="card">{{ ui.empty("You have no meters yet. Register your meter to start sending readings.", "/meters", "Add your meter") }}</div>
 {% else %}
-<p class="mb-3 text-sm">
-  Verified so far: <strong class="font-mono">{{ accepted_mwh | vkwh }} VKWH</strong>
-  <span class="text-slate-500">({{ accepted_mwh }} mWh from {{ accepted_count }} accepted reading{{ "" if accepted_count == 1 else "s" }})</span>
-  {% if rewarded_mwh != accepted_mwh %}
-  <br><span class="text-amber-700">Rewarded on Hedera so far: <span class="font-mono">{{ rewarded_mwh | vkwh }} VKWH</span>. The rest is pending.</span>
-  {% endif %}
-</p>
+<div class="mb-4 grid gap-4 sm:grid-cols-3">
+  <div class="card p-4">
+    <div class="label">Verified so far</div>
+    <div class="mt-1 num text-xl font-semibold">{{ accepted_mwh | vkwh }} <span class="text-sm text-sun-400">VKWH</span></div>
+    <div class="mt-0.5 text-xs text-muted">{{ accepted_mwh }} mWh from {{ accepted_count }} accepted reading{{ "" if accepted_count == 1 else "s" }}</div>
+  </div>
+  <div class="card p-4 sm:col-span-2">
+    <div class="label">How to read the checks</div>
+    <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+      <span>Registered → Signature → Sequence → Physics → AI</span>
+      <span class="flex items-center gap-1"><span class="grid h-4 w-4 place-items-center rounded-full bg-up/15 text-up">{{ ui.icon("check", "h-2.5 w-2.5") }}</span>passed</span>
+      <span class="flex items-center gap-1"><span class="grid h-4 w-4 place-items-center rounded-full bg-down/20 text-down">{{ ui.icon("x", "h-2.5 w-2.5") }}</span>failed</span>
+      <span class="flex items-center gap-1"><span class="grid h-4 w-4 place-items-center rounded-full bg-ink-800">·</span>not run</span>
+    </div>
+    {% if rewarded_mwh != accepted_mwh %}
+    <p class="mt-2 text-xs text-sun-400">Rewarded on Hedera so far: <span class="num">{{ rewarded_mwh | vkwh }} VKWH</span>. The rest is pending.</p>
+    {% endif %}
+  </div>
+</div>
 
-<section class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
+<section class="card overflow-x-auto">
   {% if readings %}
-  <table class="w-full text-sm">
-    <thead class="text-left text-slate-500 border-b border-slate-200">
+  <table class="w-full min-w-[760px] text-sm">
+    <thead class="border-b border-ink-700">
       <tr>
-        <th class="px-3 py-2 font-medium">Time (Lagos)</th>
-        <th class="px-3 py-2 font-medium">Meter</th>
-        <th class="px-3 py-2 font-medium text-right">Seq</th>
-        <th class="px-3 py-2 font-medium text-right">Energy</th>
-        <th class="px-3 py-2 font-medium">Decision</th>
-        <th class="px-3 py-2 font-medium">Proof</th>
-        <th class="px-3 py-2 font-medium">Reward</th>
+        <th class="th">Time (Lagos)</th>
+        <th class="th">Meter</th>
+        <th class="th text-right">Seq</th>
+        <th class="th text-right">Energy</th>
+        <th class="th">Checks</th>
+        <th class="th">Decision</th>
+        <th class="th">Proof</th>
+        <th class="th">Reward</th>
       </tr>
     </thead>
-    <tbody>
+    <tbody class="divide-y divide-ink-700/60">
       {% for r in readings %}
-      <tr class="border-b border-slate-100 last:border-0">
-        <td class="px-3 py-2 whitespace-nowrap text-slate-600">{{ r.created_at | lagos_time }}</td>
-        <td class="px-3 py-2 font-mono">{{ r.meter_id }}</td>
-        <td class="px-3 py-2 text-right font-mono">{{ r.seq }}</td>
-        <td class="px-3 py-2 text-right font-mono whitespace-nowrap">{{ r.mwh }} mWh</td>
-        <td class="px-3 py-2 whitespace-nowrap">
-          {% if r.decision == "accepted" %}
-          <span class="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs font-medium">accepted</span>
-          {% else %}
-          <span class="rounded-full bg-red-100 text-red-800 px-2 py-0.5 text-xs font-medium">rejected</span>
-          <span class="ml-1 font-mono text-xs text-red-700">{{ r.reasons }}</span>
-          {% endif %}
+      <tr class="transition hover:bg-ink-800/50 {{ 'row-new' if r.id in new_ids }}">
+        <td class="td whitespace-nowrap text-xs text-muted">{{ r.created_at | lagos_time }}</td>
+        <td class="td num text-xs">{{ r.meter_id }}</td>
+        <td class="td num text-right text-xs text-muted">{{ r.seq }}</td>
+        <td class="td num whitespace-nowrap text-right">{{ r.mwh }} mWh</td>
+        <td class="td">{{ ui.steps(r) }}</td>
+        <td class="td whitespace-nowrap">
+          {{ ui.badge(r.decision) }}
+          {% if r.reasons %}<span class="ml-1 num text-[11px] text-down">{{ r.reasons }}</span>{% endif %}
         </td>
-        <td class="px-3 py-2 whitespace-nowrap">
-          {% if r.hcs_tx %}
-          <a href="{{ hashscan_tx(r.hcs_tx) }}" target="_blank" rel="noopener" class="text-emerald-700 underline">HCS ↗</a>
-          {% else %}
-          <span class="text-amber-600 text-xs">not anchored</span>
-          {% endif %}
+        <td class="td whitespace-nowrap">
+          {% if r.hcs_tx %}{{ ui.proof(hashscan_tx(r.hcs_tx)) }}{% else %}<span class="text-xs text-sun-400">not anchored</span>{% endif %}
         </td>
-        <td class="px-3 py-2 whitespace-nowrap">
-          {% if r.decision != "accepted" or r.mwh == 0 %}
-          <span class="text-slate-300">—</span>
-          {% elif r.mint_tx %}
-          <a href="{{ hashscan_tx(r.mint_tx) }}" target="_blank" rel="noopener" class="text-emerald-700 underline">mint ↗</a>
-          {% else %}
-          <span class="text-amber-600 text-xs">pending</span>
-          {% endif %}
+        <td class="td whitespace-nowrap">
+          {% if r.decision != "accepted" or r.mwh == 0 %}<span class="text-ink-600">—</span>
+          {% elif r.mint_tx %}{{ ui.proof(hashscan_tx(r.mint_tx), "mint") }}
+          {% else %}<span class="text-xs text-sun-400">pending</span>{% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p class="px-4 py-6 text-sm text-slate-500">No readings yet. Start the simulator: <code>python gateway/simulator.py --fast</code></p>
+  {{ ui.empty("No readings here yet. Start the bridge (real meter) or the simulator, and they appear within a minute.") }}
   {% endif %}
 </section>
 {% endif %}

@@ -46,7 +46,7 @@ def test_readings_page_requires_login(client):
 def test_page_loads_the_table_with_htmx(client):
     signup(client)
     html = client.get("/readings").text
-    assert 'hx-get="/readings/table"' in html and "every 5s" in html
+    assert 'hx-get="/readings/table?show=all"' in html and "every 5s" in html
 
 
 def test_no_meters_yet(client):
@@ -62,7 +62,7 @@ def test_shows_accepted_and_rejected_with_links(client, engine):
     html = table(client)
     assert "accepted" in html and "PHYSICS_LIMIT" in html
     assert html.count(TX_URL) == 3                         # 2 HCS proofs + 1 mint
-    assert "0.000150 VKWH" in html                         # only accepted energy counts
+    assert "0.000150" in html and "150 mWh from 1" in html   # only accepted energy counts
     assert "from 1 accepted reading" in html
 
 

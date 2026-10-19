@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block content %}
+<div class="mx-auto grid max-w-5xl items-stretch gap-6 py-4 md:grid-cols-2 md:py-10">
+  <div class="card p-6 sm:p-8">
+    {% block form %}{% endblock %}
+  </div>
+  <div class="relative hidden overflow-hidden rounded-2xl border border-ink-700 p-8 md:block">
+    <div class="pointer-events-none absolute inset-0 bg-grid opacity-60"></div>
+    <div class="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-sun-500/20 blur-3xl"></div>
+    <div class="pointer-events-none absolute -bottom-24 -left-10 h-72 w-72 rounded-full bg-proof/10 blur-3xl"></div>
+    <div class="relative">
+      {{ ui.logo("h-11 w-11") }}
+      <h2 class="mt-6 text-2xl font-bold leading-tight tracking-tight">Your solar energy,<br><span class="text-gradient">verified on Hedera.</span></h2>
+      <ul class="mt-6 space-y-4 text-sm">
+        {% for icon_name, title, text in [
+          ("wallet", "Instant Hedera account", "Your App ID is a real Hedera testnet account, ready to hold VKWH and HBAR."),
+          ("shield", "Every reading checked", "Signature, sequence and physics checks, with every decision recorded on-chain."),
+          ("swap", "Trade in one transaction", "Sell VKWH for HBAR. Both sides settle together or not at all."),
+        ] %}
+        <li class="flex gap-3">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-ink-800 text-sun-400">{{ ui.icon(icon_name, "h-4.5 w-4.5") }}</span>
+          <div><div class="font-medium">{{ title }}</div><div class="text-muted">{{ text }}</div></div>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

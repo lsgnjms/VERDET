@@ -1,34 +1,203 @@
+{% import "_ui.html" as ui with context %}
 <!doctype html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0B0E11">
   <title>{% block title %}VERDET{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: { 950: "#0B0E11", 900: "#101418", 850: "#151A21", 800: "#1B2129", 700: "#262E38", 600: "#36404D" },
+            sun: { 300: "#FFD666", 400: "#FFC233", 500: "#F7A600", 600: "#D98E00" },
+            up: "#20B26C", down: "#EF454A", proof: "#2DD4BF",
+            fg: "#EAECEF", muted: "#848E9C",
+          },
+          fontFamily: {
+            sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+            mono: ["JetBrains Mono", "ui-monospace", "monospace"],
+          },
+        },
+      },
+    };
+  </script>
+  <style type="text/tailwindcss">
+    @layer components {
+      .card { @apply rounded-2xl border border-ink-700 bg-ink-850/80 backdrop-blur; }
+      .card-hover { @apply transition duration-200 hover:-translate-y-0.5 hover:border-ink-600 hover:shadow-[0_12px_40px_-12px_rgba(0,0,0,.6)]; }
+      .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60; }
+      .btn-primary { @apply btn bg-sun-500 text-ink-950 hover:bg-sun-400 shadow-[0_8px_24px_-10px_rgba(247,166,0,.7)]; }
+      .btn-ghost { @apply btn border border-ink-700 text-fg hover:border-ink-600 hover:bg-ink-800; }
+      .btn-danger { @apply btn border border-down/40 text-down hover:bg-down/10; }
+      .input { @apply w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2.5 text-sm text-fg placeholder:text-muted/70 transition focus:border-sun-500 focus:outline-none focus:ring-2 focus:ring-sun-500/20; }
+      .label { @apply text-[11px] font-medium uppercase tracking-wider text-muted; }
+      .chip { @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium; }
+      .num { @apply font-mono tabular-nums; }
+      .nav-link { @apply flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted transition hover:bg-ink-800 hover:text-fg; }
+      .nav-link.active { @apply bg-ink-800 text-fg; }
+      .th { @apply px-4 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-muted; }
+      .td { @apply px-4 py-3 align-middle; }
+    }
+  </style>
+  <style>
+    body { background-color: #0B0E11; }
+    .bg-glow { background:
+      radial-gradient(600px 300px at 15% -10%, rgba(247,166,0,.16), transparent 70%),
+      radial-gradient(500px 280px at 90% 0%, rgba(45,212,191,.10), transparent 70%); }
+    .bg-grid { background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 40px 40px; }
+    .text-gradient { background: linear-gradient(90deg, #FFC233, #F7A600 45%, #2DD4BF);
+      -webkit-background-clip: text; background-clip: text; color: transparent; }
+    @keyframes row-in { from { background-color: rgba(247,166,0,.20); } to { background-color: transparent; } }
+    .row-new { animation: row-in 2.5s ease-out; }
+    @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .fade-in { animation: fade-in .35s ease-out both; }
+    @keyframes ping { 75%, 100% { transform: scale(2.2); opacity: 0; } }
+    .live-dot { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 9999px; background: #20B26C; }
+    .live-dot::after { content: ""; position: absolute; inset: 0; border-radius: 9999px; background: #20B26C; animation: ping 1.6s cubic-bezier(0,0,.2,1) infinite; }
+    .live-dot.off { background: #848E9C; } .live-dot.off::after { display: none; }
+    @keyframes shimmer { 100% { transform: translateX(100%); } }
+    .skeleton { position: relative; overflow: hidden; background: #1B2129; border-radius: .5rem; }
+    .skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.05), transparent); animation: shimmer 1.4s infinite; }
+    .htmx-added { animation: fade-in .3s ease-out; }
+    ::selection { background: rgba(247,166,0,.35); }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  </style>
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  {% block head %}{% endblock %}
 </head>
-<body class="min-h-screen bg-slate-50 text-slate-900">
-  <header class="bg-white border-b border-slate-200">
-    <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-      <a href="/" class="font-bold text-lg tracking-tight text-emerald-700">VERDET</a>
+<body class="min-h-full bg-ink-950 font-sans text-fg antialiased">
+  <div class="pointer-events-none fixed inset-0 -z-10 bg-glow"></div>
+
+  <!-- Top bar -->
+  <header class="sticky top-0 z-40 border-b border-ink-700/80 bg-ink-950/80 backdrop-blur-xl">
+    <div class="mx-auto flex h-16 max-w-6xl items-center gap-6 px-4">
+      <a href="{{ '/dashboard' if user else '/' }}" class="flex items-center gap-2.5">
+        {{ ui.logo() }}
+        <span class="text-lg font-extrabold tracking-tight">VERDET</span>
+        <span class="hidden rounded-md border border-sun-500/30 bg-sun-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sun-400 sm:inline">Testnet</span>
+      </a>
+
       {% if user %}
-      <div class="flex items-center gap-4 text-sm">
-        <nav class="flex gap-3">
-          <a href="/wallet" class="text-slate-700 hover:text-emerald-700">Wallet</a>
-          <a href="/meters" class="text-slate-700 hover:text-emerald-700">Meters</a>
-          <a href="/readings" class="text-slate-700 hover:text-emerald-700">Readings</a>
-          <a href="/market" class="text-slate-700 hover:text-emerald-700">Market</a>
-        </nav>
-        <span class="text-slate-500 hidden sm:inline">{{ user.email }}</span>
-        <form method="post" action="/logout">
-          <button class="text-slate-600 hover:text-slate-900 underline">Log out</button>
-        </form>
-      </div>
+      <nav class="hidden items-center gap-1 md:flex">
+        <a href="/dashboard" class="nav-link {{ 'active' if active == 'dashboard' }}">{{ ui.icon("home") }}Dashboard</a>
+        <a href="/readings" class="nav-link {{ 'active' if active == 'readings' }}">{{ ui.icon("list") }}Readings</a>
+        <a href="/market" class="nav-link {{ 'active' if active == 'market' }}">{{ ui.icon("swap") }}Market</a>
+        <a href="/meters" class="nav-link {{ 'active' if active == 'meters' }}">{{ ui.icon("cpu") }}Meter</a>
+        <a href="/impact" class="nav-link {{ 'active' if active == 'impact' }}">{{ ui.icon("globe") }}Impact</a>
+      </nav>
       {% endif %}
+
+      <div class="ml-auto flex items-center gap-2">
+        {% if user %}
+        <div class="hidden items-center gap-1 rounded-lg border border-ink-700 bg-ink-900 py-1 pl-2.5 pr-1 sm:flex">
+          <span class="text-[11px] text-muted">App ID</span>
+          <span class="num text-xs font-medium">{{ user.account_id }}</span>
+          {{ ui.copy(user.account_id) }}
+        </div>
+        <!-- Account menu: email and log out stay hidden until opened -->
+        <div class="relative" id="account-menu">
+          <button type="button" onclick="vd.toggleMenu(event)" aria-haspopup="true" aria-expanded="false"
+                  class="flex items-center gap-1.5 rounded-full border border-ink-700 bg-ink-900 p-1 pr-2 transition hover:border-ink-600">
+            <span class="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-sun-400 to-proof text-xs font-bold uppercase text-ink-950">{{ user.email[0] }}</span>
+            {{ ui.icon("chevron", "h-3.5 w-3.5 text-muted") }}
+          </button>
+          <div id="account-panel" class="fade-in absolute right-0 mt-2 hidden w-72 overflow-hidden rounded-xl border border-ink-700 bg-ink-900 shadow-2xl">
+            <div class="border-b border-ink-700 px-4 py-3">
+              <div class="label">Signed in as</div>
+              <div class="mt-0.5 truncate text-sm font-medium">{{ user.email }}</div>
+              <div class="mt-2 flex items-center justify-between rounded-lg bg-ink-850 px-2.5 py-1.5">
+                <span class="text-xs text-muted">App ID <span class="num text-fg">{{ user.account_id }}</span></span>
+                {{ ui.copy(user.account_id) }}
+              </div>
+            </div>
+            <a href="{{ hashscan_account(user.account_id) }}" target="_blank" rel="noopener"
+               class="flex items-center gap-2 px-4 py-2.5 text-sm text-muted transition hover:bg-ink-800 hover:text-fg">{{ ui.icon("external") }}View account on HashScan</a>
+            <form method="post" action="/logout" class="border-t border-ink-700">
+              <button class="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-down transition hover:bg-down/10">{{ ui.icon("logout") }}Log out</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <a href="/impact" class="nav-link hidden sm:flex">{{ ui.icon("globe") }}Impact</a>
+        <a href="/login" class="btn-ghost">Log in</a>
+        <a href="/signup" class="btn-primary">Sign up</a>
+        {% endif %}
+      </div>
     </div>
   </header>
-  <main class="max-w-3xl mx-auto px-4 py-8">
+
+  <main class="mx-auto max-w-6xl overflow-x-clip px-4 pb-28 pt-6 md:pb-12">
     {% block content %}{% endblock %}
   </main>
+
+  {% if user %}
+  <!-- Phone tab bar -->
+  <nav class="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-ink-700 bg-ink-950/95 backdrop-blur-xl md:hidden">
+    {% for href, name, label in [("/dashboard", "home", "Home"), ("/readings", "list", "Readings"), ("/market", "swap", "Market"), ("/meters", "cpu", "Meter"), ("/impact", "globe", "Impact")] %}
+    <a href="{{ href }}" class="flex flex-col items-center gap-1 py-2.5 text-[11px] {{ 'text-sun-400' if active == href[1:] or (href == '/dashboard' and active == 'dashboard') else 'text-muted' }}">
+      {{ ui.icon(name, "h-5 w-5") }}{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  <footer class="mx-auto hidden max-w-6xl items-center justify-between px-4 pb-8 text-xs text-muted md:flex">
+    <span>VERDET · Hedera testnet prototype · trust-minimized and auditable</span>
+    <span>IEEE ClimateChain Global Hackathon 2026</span>
+  </footer>
+
+  <!-- Toasts -->
+  <div id="toasts" class="fixed right-4 top-20 z-50 flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2">
+    {% if flash %}
+    <div class="toast fade-in flex items-start gap-3 rounded-xl border p-3.5 shadow-2xl backdrop-blur-xl
+                {{ 'border-up/30 bg-ink-900/95' if flash.kind == 'success' else 'border-down/30 bg-ink-900/95' }}">
+      <span class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full {{ 'bg-up/15 text-up' if flash.kind == 'success' else 'bg-down/15 text-down' }}">
+        {{ ui.icon("check" if flash.kind == "success" else "x", "h-3.5 w-3.5") }}</span>
+      <div class="min-w-0 flex-1 text-sm">
+        <p>{{ flash.text }}</p>
+        {% if flash.link %}<a href="{{ flash.link }}" target="_blank" rel="noopener" class="mt-1 inline-flex items-center gap-1 text-xs font-medium text-proof hover:underline">See it on HashScan {{ ui.icon("external", "h-3 w-3") }}</a>{% endif %}
+      </div>
+      <button onclick="this.closest('.toast').remove()" class="text-muted hover:text-fg">{{ ui.icon("x", "h-4 w-4") }}</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <script>
+    const vd = {
+      toggleMenu(event) {
+        event.stopPropagation();
+        const panel = document.getElementById("account-panel");
+        panel.classList.toggle("hidden");
+        event.currentTarget.setAttribute("aria-expanded", !panel.classList.contains("hidden"));
+      },
+      copy(text, el) {
+        navigator.clipboard.writeText(text).then(() => vd.toast("Copied " + text));
+      },
+      toast(text) {
+        const t = document.createElement("div");
+        t.className = "toast fade-in rounded-xl border border-ink-700 bg-ink-900/95 px-4 py-3 text-sm shadow-2xl";
+        t.textContent = text;
+        document.getElementById("toasts").appendChild(t);
+        setTimeout(() => t.remove(), 2500);
+      },
+    };
+    document.addEventListener("click", (e) => {
+      const panel = document.getElementById("account-panel");
+      if (panel && !document.getElementById("account-menu").contains(e.target)) panel.classList.add("hidden");
+    });
+    // Success toasts disappear by themselves; errors stay until closed.
+    document.querySelectorAll("#toasts .toast").forEach((t) => {
+      if (t.className.includes("border-up")) setTimeout(() => t.remove(), 7000);
+    });
+  </script>
+  {% block scripts %}{% endblock %}
 </body>
 </html>
