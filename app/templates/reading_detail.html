@@ -39,10 +39,9 @@
         ("Signature", "Signed by that meter's key; nothing changed since."),
         ("Sequence", "Seq " ~ r.seq ~ " is newer than the meter's last reading."),
         ("Physics", "Peak ≤ 1.1 × " ~ meter.rated_w ~ " W, and energy ≤ peak × " ~ window_s | round(0) | int ~ " s."),
-        ("AI", "Looks like real sunshine. (Arrives with Phase 5.)"),
       ] %}
       {% set i = loop.index0 %}
-      {% if fail is none %}{% set state = "skip" if name == "AI" else "pass" %}
+      {% if fail is none %}{% set state = "pass" %}
       {% elif i < fail %}{% set state = "pass" %}{% elif i == fail %}{% set state = "fail" %}{% else %}{% set state = "skip" %}{% endif %}
       <li class="flex gap-3 rounded-xl border px-3.5 py-3
                  {{ {'pass': 'border-up/20 bg-up/5', 'fail': 'border-down/40 bg-down/10', 'skip': 'border-ink-700 bg-ink-900/50'}[state] }}">

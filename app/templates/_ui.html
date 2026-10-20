@@ -50,20 +50,20 @@
 {%- endif %}
 {%- endmacro %}
 
-{# The verification pipeline for one reading: registered -> signature -> sequence -> physics -> AI #}
+{# The verification pipeline for one reading: registered -> signature -> sequence -> physics #}
 {% macro steps(reading) -%}
-{% set names = ["Registered", "Signature", "Sequence", "Physics", "AI"] %}
+{% set names = ["Registered", "Signature", "Sequence", "Physics"] %}
 {% set fail = reading.reasons | failed_step %}
 <div class="flex items-center" aria-label="verification steps">
   {% for name in names %}
     {% set i = loop.index0 %}
     {% if fail is none %}
-      {% set state = "skip" if name == "AI" else "pass" %}
+      {% set state = "pass" %}
     {% elif i < fail %}{% set state = "pass" %}
     {% elif i == fail %}{% set state = "fail" %}
     {% else %}{% set state = "skip" %}{% endif %}
     {% if not loop.first %}<span class="h-px w-2.5 {{ 'bg-up/50' if state == 'pass' else 'bg-ink-600' }}"></span>{% endif %}
-    <span title="{{ name }}: {{ {'pass': 'passed', 'fail': 'failed', 'skip': 'not run' if name != 'AI' or fail is not none else 'not active yet'}[state] }}"
+    <span title="{{ name }}: {{ {'pass': 'passed', 'fail': 'failed', 'skip': 'not run'}[state] }}"
           class="grid h-5 w-5 place-items-center rounded-full border text-[10px]
                  {{ {'pass': 'border-up/40 bg-up/15 text-up', 'fail': 'border-down/50 bg-down/20 text-down', 'skip': 'border-ink-600 bg-ink-800 text-muted'}[state] }}">
       {%- if state == "pass" %}{{ icon("check", "h-3 w-3") }}{% elif state == "fail" %}{{ icon("x", "h-3 w-3") }}{% else %}·{% endif -%}

@@ -19,8 +19,10 @@ Goal (Plan.md): a polished, installable app on a public URL that judges can open
 | 9d | **Price history chart** on the market (price per kWh line + volume bars) | Done 2026-10-19 |
 | 9e | **Price band**: offers must be within `PRICE_MIN_HBAR_PER_KWH`–`PRICE_MAX_HBAR_PER_KWH` (defaults 1–50, testnet placeholders); live red/green preview in the sell panel | Done 2026-10-19 |
 | 9f | Event branding removed from the product (footer); `tests/test_features.py` (19) → 182 passing | Done 2026-10-19 |
-| 10 | PWA: `manifest.json`, icons, `sw.js` | To do |
-| 11 | Deploy to Render + Neon Postgres (`psycopg[binary]`), env vars, point the gateway at production | To do |
+| 10 | PWA: `app/static/manifest.json`, icons (192/512, maskable), `/sw.js` (network-first, offline page), registered in `base.html` | Done 2026-10-20 |
+| 10b | AI step removed from the UI (four checks), Phase 5 dropped | Done 2026-10-20 |
+| 11a | Deploy prep: `psycopg[binary]`, `database_url()` (postgres → postgresql+psycopg), `pool_pre_ping`, HTTPS-only cookies on Render, `/healthz`, `render.yaml` blueprint; `tests/test_deploy.py` (7) → 216 passing | Done 2026-10-20 |
+| 11b | Create Neon database + Render service, set secrets, first deploy, smoke test on the live URL | To do (you + me) |
 
 ## Decisions
 - **Location:** the form no longer asks for latitude/longitude; meters are sited in Lagos (6.52, 3.38) by default. The `registry` message still records it. Phase 5's clear-sky check uses it.

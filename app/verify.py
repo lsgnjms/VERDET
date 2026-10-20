@@ -1,6 +1,8 @@
 """Reading verification, in the fixed order of CLAUDE.md rule 7:
 
-    registered -> signature -> sequence -> physics -> AI (Phase 5)
+    registered -> signature -> sequence -> physics
+
+(An AI/solar-model check was planned as step 5 and dropped on Oct 20; see Plan.md.)
 
 These are pure functions: no database, no network. The /api/readings route
 saves the result and moves the meter's last_seq forward.
@@ -101,5 +103,4 @@ def verify_reading(reading: dict, meter: Meter | None) -> Decision:
     if not physics_ok(reading, meter.rated_w):
         return reject(PHYSICS_LIMIT, new_last_seq)
 
-    # 5. AI (Phase 5) goes here.
     return Decision("accepted", [], digest, new_last_seq)

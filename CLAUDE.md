@@ -5,7 +5,7 @@ Read this first in every session. The full plan is in `Plan.md`. This file holds
 ## Project
 **VERDET** (VERifiable Decentralized Energy Trading): a hackathon prototype for the IEEE ClimateChain Global Hackathon, Track: Renewable Energy & Energy Trading. Deadline: Oct 25, 2026, 3:00 pm Lagos.
 
-Flow: Arduino Mega meter measures solar output and **signs** each reading window → PC gateway relays → FastAPI app verifies (identity, signature, replay, duplicate, physics, AI) → every decision is recorded on a Hedera HCS topic → accepted energy mints VKWH (HTS token) to the owner → users trade VKWH for HBAR on a fixed-price marketplace (one atomic transaction) or redeem it for airtime/data (demo vouchers; the VKWH is really returned and burned on Hedera) → public impact page.
+Flow: Arduino Mega meter measures solar output and **signs** each reading window → PC gateway relays → FastAPI app verifies (identity, signature, replay, duplicate, physics) → every decision is recorded on a Hedera HCS topic → accepted energy mints VKWH (HTS token) to the owner → users trade VKWH for HBAR on a fixed-price marketplace (one atomic transaction) or redeem it for airtime/data (demo vouchers; the VKWH is really returned and burned on Hedera) → public impact page.
 
 Precedent: GreenAfrica (2025 Hedera Africa Hackathon winner). Keep the build that simple.
 
@@ -20,7 +20,7 @@ Precedent: GreenAfrica (2025 Hedera Africa Hackathon winner). Keep the build tha
 - SQLModel: SQLite locally, Postgres (Neon) in production, chosen by `DATABASE_URL`
 - Hedera: the official Hiero Python SDK; mirror node REST via `httpx`
 - PyNaCl (Ed25519 verify), `cryptography` (encrypting custodial keys), argon2 (passwords)
-- pvlib + scikit-learn (AI verifier), pyserial (gateway), pytest
+- pyserial (gateway), pytest. (pvlib + scikit-learn were planned for an AI verifier; dropped Oct 20.)
 - Arduino Mega firmware in C++ with the rweather `Crypto` library
 - Deploy: Render
 
@@ -56,11 +56,11 @@ python gateway/serial_bridge.py --port COM3   # real meter
    It is built in exactly one Python place (`gateway/canonical.py`) and must match `firmware/meter/meter.ino` byte for byte. Change both together, bump `v1`, and update the tests.
 5. **Integers on the wire.** Energy is in mWh, power in mW, voltage in mV, current in mA. No floats in signed data.
 6. **Every reading decision, accepted or rejected, is submitted to the `readings` HCS topic.** Keep HCS messages under 1 KB.
-7. **Verification order is fixed:** registered → signature → sequence check → physics → AI.
+7. **Verification order is fixed:** registered → signature → sequence check → physics. (No AI step: Phase 5 dropped Oct 20. Don't show or claim one.)
    - Sequence check: `seq == last_seq` → `DUPLICATE` (the same window resent, i.e. an attempt to claim twice); `seq < last_seq` → `REPLAY` (an old window resent); only `seq > last_seq` continues.
    - `last_seq` advances for **every reading that passes the signature check**, whether it is later accepted or rejected.
    - Database backstop for races: a partial unique index on `(meter_id, seq) WHERE decision = 'accepted'`. A violation is reported as `DUPLICATE`. Rejected readings are stored too.
-   - Codes, used exactly: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`, `AI_ANOMALY` (`AI_UNAVAILABLE` is logged, not a rejection). There is no night rule, by decision (Oct 14): the demo is filmed in daylight, and evening hardware testing must work.
+   - Codes, used exactly: `UNREGISTERED`, `BAD_SIGNATURE`, `REPLAY`, `DUPLICATE`, `PHYSICS_LIMIT`. There is no night rule, by decision (Oct 14): the demo is filmed in daylight, and evening hardware testing must work.
 8. **VKWH:** 1 VKWH = 1 kWh, 6 decimals (1 unit = 1 mWh). Mint only for accepted readings.
 9. **The marketplace buy is one atomic `TransferTransaction`** (VKWH and HBAR legs, both signatures). If the SDK can't do this, stop and ask; don't silently use two transfers.
 10. **Honest claims only.** No "trustless", no "carbon credits", no "real energy delivery" in the UI, docs or comments. Say "verified-energy reward token" and "trust-minimized and auditable".
@@ -90,4 +90,5 @@ python gateway/serial_bridge.py --port COM3   # real meter
 - Branch: `main`. Commit at every passing checkpoint.
 - Marketplace (Oct 19): sellers enter **price per kWh**; the total is computed. Price band `PRICE_MIN/MAX_HBAR_PER_KWH` in `.env`.
 - Redemption (Oct 19): VKWH → treasury → burned, recorded on the `redemptions` topic (`REDEMPTIONS_TOPIC_ID`); phone numbers are masked in HCS messages; airtime/data delivery is a labelled demo voucher. Never claim real airtime was sent.
-- Phase 5 is the minimal version (pvlib clear-sky only, no scikit-learn model).
+- Oct 20 (organisers' advice, parts didn't arrive): **Phase 5 dropped.** **Phase 4 is a mock-up** (`docs/wiring-mockup.png`: 20 W panel or 12 V adapter, ACS712-20A, 47 kΩ/10 kΩ divider, fan), uncalibrated, showing real signed readings. Demo VKWH comes from the simulator against the deployed app; say so in the video. Priorities: deploy, mock-up, demo data, docs, video.
+- Licence and what to publish: decided after the hackathon results. Until then, push as is.

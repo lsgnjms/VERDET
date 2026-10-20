@@ -210,38 +210,22 @@ Don't start the next phase until the current checkpoint passes.
 
 ---
 
-### Phase 4 — The real meter (Day 5, 4 h)
-**Goal:** The Arduino Mega replaces the simulator and real, signed measurements flow end to end.
+### Phase 4 — The meter as a mock-up (updated Oct 20)
+**Goal:** Show the real device signing real (uncalibrated) readings end to end. Parts for a calibrated build didn't arrive; the organisers advised a mock-up with the parts on hand.
 
-- [ ] Circuit (updated Oct 19 for the parts available): 47 kΩ/10 kΩ voltage divider on A0, ACS712-20A current sensor on A1 in series with the load, 12 V fan + 20–22 Ω 10 W resistor as the load, LM2596 buck on the panel, common ground
-- [ ] Firmware: 1 kHz timer-interrupt sampling (so signing, about 6.3 s, doesn't pause measurement), 1-second averages, accumulate mWh, keep `seq` and the key in EEPROM, sign per window, print JSON lines
-- [ ] Calibrate V and I against a multimeter and store the constants in firmware
-- [ ] `gateway/serial_bridge.py`: read serial lines → POST to `/api/readings`
-- [ ] Register the real meter using the pubkey printed on first boot
+- [x] Firmware: 1 kHz timer-interrupt sampling, 1-second averages, mWh per 60 s window, seq and key in EEPROM, Ed25519 signing, JSON lines (irmware/meter/meter.ino)
+- [x] gateway/serial_bridge.py: forward lines unchanged, log, --resend SEQ
+- [x] Real board → bridge → app → Hedera verified (Oct 19, VD-0001 seq 30)
+- [ ] Wire the mock-up per docs/wiring-mockup.png: 20 W panel (or a 12 V adapter via the barrel jack), D2 blocking diode, ACS712-20A on A1, 47 kΩ/10 kΩ divider on A0, 12 V fan with D1 flyback, common ground
+- [ ] Register the meter on the deployed app at 20 W; film a live accepted reading
+- Dropped: calibration against a multimeter (no multimeter / power resistor). Readings are labelled uncalibrated.
 
-**Deliverables:** `firmware/meter/meter.ino`, `docs/wiring.png`, `gateway/serial_bridge.py`, calibration notes
-**Checkpoint:**
-- V and I are within ±5% of the multimeter at two load points
-- Real readings show `accepted` in the app and mint VKWH
-- Unplug and replug the Mega → `seq` continues, and replaying an old line → `REPLAY`
-
-**Effort:** 4 h
+**Checkpoint:** with the mock-up powered, the fan spins, the bridge shows signed readings, and the deployed app shows them ccepted with HCS proof. Replaying an old logged line (--resend) → REPLAY.
 
 ---
 
-### Phase 5 — AI verification (Day 6, 4 h)
-**Goal:** An AI check catches plausible fakes that the rules miss, and the app keeps working if the check fails.
-
-**Scope cut (Oct 19, R13 fallback): minimal version only.** No IsolationForest / scikit-learn model.
-- [ ] `ai.py`: pvlib clear-sky expected energy for the meter's location, window and rating; flag energy well above what the sky allows → `AI_ANOMALY`
-- [ ] Wire it into the pipeline after the physics checks; if it errors → rules-only, logged as `AI_UNAVAILABLE`
-- [ ] Simulator flag `--lamp` (steady output when the sky can't provide it)
-- [ ] `tests/test_ai.py`: normal accepted; lamp flagged
-- [ ] Open decision: the check rejects evening bench tests (clear sky = 0 at night). Proposed `.env` switch to disable it for bench testing. Label the step honestly in the UI ("Solar model", not "AI")
-
-**Deliverables:** `app/ai.py`, tests, `AI_ANOMALY` decisions on HCS
-**Checkpoint:** `pytest tests/test_ai.py` passes. `--lamp` → `AI_ANOMALY` in the app and on HCS, and normal data is still accepted.
-**Effort:** 4 h
+### Phase 5 — AI verification: DROPPED (Oct 20)
+No real hardware deployment for the demo, so a solar-model/AI check adds little; dropped with the organisers' guidance in mind. The verification pipeline is four checks (registered → signature → sequence → physics). Listed in §5.
 
 ---
 
@@ -349,7 +333,8 @@ Don't start the next phase until the current checkpoint passes.
 - Solidity claims registry; Guardian policy flow; alignment with a named registry methodology (Gold Standard, Verra, I-REC)
 - Merkle-batched anchoring for thousands of meters per HCS message
 - Real airtime/data delivery through a provider API (e.g. Africa's Talking, Reloadly) and electricity-token credit; demo vouchers were built in Phase 6b
-- Isolation-forest anomaly model on top of the clear-sky check (cut from Phase 5 on Oct 19)
+- AI / solar-model verification: pvlib clear-sky expected energy plus an anomaly model (Phase 5, dropped Oct 20)
+- Calibrated meter build (power resistor, multimeter, buck converter) with ±5% accuracy
 - Mini-grid operator dashboard and community energy pools
 - Generator-runtime sensing to measure diesel displacement directly
 - Night-generation rule (`NIGHT_GENERATION`): reject energy claimed while the sun is down at the meter's location (pvlib solar position). Needs a trusted window time (an RTC on the meter, or Hedera consensus time)

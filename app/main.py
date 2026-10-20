@@ -16,7 +16,8 @@ from typing import Annotated
 
 from dotenv import load_dotenv
 from fastapi import Body, Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
@@ -65,10 +66,34 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="VERDET", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=_session_secret(), same_site="lax")
+ON_RENDER = bool(os.getenv("RENDER"))   # Render sets this; the live site is HTTPS-only
 
+app = FastAPI(title="VERDET", lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=_session_secret(), same_site="lax", https_only=ON_RENDER)
+
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+
+@app.get("/healthz")
+def healthz(db: Annotated[Session, Depends(get_session)]) -> JSONResponse:
+    """For Render's health check: the app is up and the database answers."""
+    db.exec(select(func.count(User.id))).one()
+    return JSONResponse({"ok": True})
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    """Served from the root so the PWA's service worker controls the whole site."""
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/offline", response_class=HTMLResponse)
+def offline(request: Request):
+    """Shown by the service worker when the phone has no connection."""
+    return templates.TemplateResponse(request, "offline.html", {"user": None})
 
 
 # --- Display helpers (integers in, readable text out; no float rounding) ----
@@ -109,9 +134,9 @@ def as_utc(moment: datetime) -> datetime:
 
 
 def failed_step(reasons: str) -> int | None:
-    """Which verification step (0-4) a rejection failed at; None if accepted."""
+    """Which verification step (0-3) a rejection failed at; None if accepted."""
     steps = {"UNREGISTERED": 0, "BAD_SIGNATURE": 1, "REPLAY": 2, "DUPLICATE": 2,
-             "PHYSICS_LIMIT": 3, "AI_ANOMALY": 4}
+             "PHYSICS_LIMIT": 3}
     for code in reasons.split(","):
         if code in steps:
             return steps[code]
@@ -462,7 +487,7 @@ def my_events(db: DbSession, user: CurrentUser, after: int | None = None) -> JSO
 
 # --- Meters -----------------------------------------------------------------
 
-SIGNATURE_PASSED = ("REPLAY", "DUPLICATE", "PHYSICS_LIMIT", "AI_ANOMALY")
+SIGNATURE_PASSED = ("REPLAY", "DUPLICATE", "PHYSICS_LIMIT")
 
 
 def parse_meter_form(meter_id: str, pubkey_hex: str, rated_w: str) -> tuple[dict, str | None]:

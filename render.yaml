@@ -1,0 +1,56 @@
+# Render blueprint for VERDET (Hedera testnet). Secrets are NOT stored here:
+# every entry with `sync: false` is typed into the Render dashboard on first deploy.
+services:
+  - type: web
+    name: verdet
+    runtime: python
+    plan: free
+    region: frankfurt            # closest Render region to Lagos
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      # Hedera (testnet only; the app refuses anything else)
+      - key: NETWORK
+        value: testnet
+      - key: OPERATOR_ID
+        sync: false
+      - key: OPERATOR_KEY
+        sync: false
+      - key: OPERATOR_KEY_TYPE
+        value: ecdsa
+      - key: OPERATOR_KEY_FORMAT
+        sync: false              # hex or der, as in your .env
+      - key: MIRROR_URL
+        value: https://testnet.mirrornode.hedera.com/api/v1
+      # Public Hedera IDs created by scripts/setup_hedera.py
+      - key: VKWH_TOKEN_ID
+        value: 0.0.11006043
+      - key: REGISTRY_TOPIC_ID
+        value: 0.0.11006039
+      - key: READINGS_TOPIC_ID
+        value: 0.0.11006041
+      - key: TRADES_TOPIC_ID
+        value: 0.0.11006042
+      - key: REDEMPTIONS_TOPIC_ID
+        value: 0.0.11090339
+      # App secrets
+      - key: SESSION_SECRET
+        generateValue: true      # Render creates a random value
+      - key: KEY_ENCRYPTION_SECRET
+        sync: false              # a NEW Fernet key for production (see .env.example)
+      - key: DATABASE_URL
+        sync: false              # Neon connection string (postgresql://...)
+      # Market and impact settings
+      - key: PRICE_MIN_HBAR_PER_KWH
+        value: "1"
+      - key: PRICE_MAX_HBAR_PER_KWH
+        value: "50"
+      - key: PRICE_REFERENCE_HBAR_PER_KWH
+        value: "10"
+      - key: DIESEL_L_PER_KWH
+        value: "0.3"
+      - key: CO2_KG_PER_L
+        value: "2.68"

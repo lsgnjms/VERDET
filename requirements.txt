@@ -5,6 +5,7 @@ jinja2==3.1.6
 python-multipart==0.0.32  # lets FastAPI read HTML form posts
 itsdangerous==2.2.0       # signs the session cookie
 sqlmodel==0.0.48
+psycopg[binary]==3.3.6    # Postgres driver (Neon in production)
 
 # Hedera
 hiero-sdk-python==0.3.0

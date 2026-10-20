@@ -127,10 +127,22 @@ class Redemption(SQLModel, table=True):
 
 # --- Connection -------------------------------------------------------------
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./verdet.db")
-# SQLite needs this so FastAPI's worker threads can share the connection.
-_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=_connect_args)
+def database_url(raw: str) -> str:
+    """Neon/Render give 'postgres://...' or 'postgresql://...'; SQLAlchemy needs the
+    driver named: 'postgresql+psycopg://...'. SQLite URLs pass through unchanged."""
+    for prefix in ("postgres://", "postgresql://"):
+        if raw.startswith(prefix):
+            return "postgresql+psycopg://" + raw[len(prefix):]
+    return raw
+
+
+DATABASE_URL = database_url(os.getenv("DATABASE_URL", "sqlite:///./verdet.db"))
+if DATABASE_URL.startswith("sqlite"):
+    # SQLite needs this so FastAPI's worker threads can share the connection.
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    # Neon closes idle connections; pre_ping replaces dead ones instead of erroring.
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 
 
 def create_db() -> None:
