@@ -17,6 +17,24 @@ def test_database_url_names_the_postgres_driver():
     assert database_url("sqlite:///./verdet.db") == "sqlite:///./verdet.db"
 
 
+def test_database_url_forgives_copy_paste_extras():
+    expected = "postgresql+psycopg://u:p@ep-x.neon.tech/db?sslmode=require"
+    for pasted in [
+        "  postgresql://u:p@ep-x.neon.tech/db?sslmode=require \n",
+        "'postgresql://u:p@ep-x.neon.tech/db?sslmode=require'",
+        "psql 'postgresql://u:p@ep-x.neon.tech/db?sslmode=require'",
+    ]:
+        assert database_url(pasted) == expected
+
+
+def test_bad_database_url_gives_a_clear_message_without_the_secret():
+    import pytest
+    from app.models import make_engine
+    with pytest.raises(RuntimeError, match="isn't a valid database URL") as err:
+        make_engine("not a url with secret-password")
+    assert "secret-password" not in str(err.value)
+
+
 def test_healthz(client):
     resp = client.get("/healthz")
     assert resp.status_code == 200 and resp.json() == {"ok": True}

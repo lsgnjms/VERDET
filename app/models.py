@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from sqlalchemy import Index, inspect, text
+from sqlalchemy.exc import ArgumentError
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 load_dotenv()
@@ -129,20 +130,36 @@ class Redemption(SQLModel, table=True):
 
 def database_url(raw: str) -> str:
     """Neon/Render give 'postgres://...' or 'postgresql://...'; SQLAlchemy needs the
-    driver named: 'postgresql+psycopg://...'. SQLite URLs pass through unchanged."""
+    driver named: 'postgresql+psycopg://...'. SQLite URLs pass through unchanged.
+
+    Also forgives common copy-paste extras: spaces, quotes, and Neon's
+    "psql 'postgresql://...'" command form."""
+    url = raw.strip().strip("'\"")
+    if url.startswith("psql "):
+        url = url[len("psql "):].strip().strip("'\"")
     for prefix in ("postgres://", "postgresql://"):
-        if raw.startswith(prefix):
-            return "postgresql+psycopg://" + raw[len(prefix):]
-    return raw
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
+def make_engine(url: str):
+    """Create the engine, with a clear message (and no secret in it) if the URL is bad."""
+    try:
+        if url.startswith("sqlite"):
+            # SQLite needs this so FastAPI's worker threads can share the connection.
+            return create_engine(url, connect_args={"check_same_thread": False})
+        # Neon closes idle connections; pre_ping replaces dead ones instead of erroring.
+        return create_engine(url, pool_pre_ping=True, pool_recycle=300)
+    except ArgumentError:
+        raise RuntimeError(
+            "DATABASE_URL isn't a valid database URL. Paste only the connection string that "
+            "starts with postgresql://, with no 'psql', quotes or spaces around it."
+        ) from None
 
 
 DATABASE_URL = database_url(os.getenv("DATABASE_URL", "sqlite:///./verdet.db"))
-if DATABASE_URL.startswith("sqlite"):
-    # SQLite needs this so FastAPI's worker threads can share the connection.
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    # Neon closes idle connections; pre_ping replaces dead ones instead of erroring.
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
+engine = make_engine(DATABASE_URL)
 
 
 def create_db() -> None:
