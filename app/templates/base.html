@@ -222,23 +222,49 @@
       let cursor = null;
       try { cursor = sessionStorage.getItem(KEY); } catch (e) {}
 
-      function show(e) {
-        const earned = e.decision === "accepted";
+      const MAX_LIVE = 3;          // never more than 3 pop-ups on screen
+      const LIFETIME_MS = 6000;
+
+      function addToast(href, earned, title, sub) {
+        const box = document.getElementById("toasts");
         const t = document.createElement("a");
-        t.href = "/readings/" + e.id;
-        t.className = "toast toast-in flex items-center gap-3 rounded-xl border p-3.5 shadow-2xl backdrop-blur-xl " +
+        t.href = href;
+        t.className = "toast toast-live toast-in flex items-center gap-3 rounded-xl border p-3.5 shadow-2xl backdrop-blur-xl " +
           (earned ? "border-sun-500/40 bg-ink-900/95" : "border-down/40 bg-ink-900/95");
         t.innerHTML = earned
           ? "<span class='coin grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sun-300 to-sun-600 text-ink-950 shadow-[0_0_24px_rgba(247,166,0,.6)]'>" +
             "<svg class='h-5 w-5' fill='none' viewBox='0 0 24 24' stroke-width='2' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' d='M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z'/></svg></span>" +
-            "<div class='min-w-0'><div class='num text-base font-semibold text-sun-400'>+" + e.vkwh + " VKWH</div>" +
-            "<div class='text-xs text-muted'>earned for reading #" + e.seq + " · " + e.mwh + " mWh verified</div></div>"
+            "<div class='min-w-0'><div class='num text-base font-semibold text-sun-400'>" + title + "</div>" +
+            "<div class='text-xs text-muted'>" + sub + "</div></div>"
           : "<span class='grid h-10 w-10 shrink-0 place-items-center rounded-full bg-down/15 text-down'>" +
             "<svg class='h-5 w-5' fill='none' viewBox='0 0 24 24' stroke-width='2' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' d='M6 18L18 6M6 6l12 12'/></svg></span>" +
-            "<div class='min-w-0'><div class='text-sm font-semibold text-down'>Reading #" + e.seq + " rejected</div>" +
-            "<div class='num text-xs text-muted'>" + e.reasons + " · recorded on Hedera</div></div>";
-        document.getElementById("toasts").appendChild(t);
-        setTimeout(() => t.remove(), 9000);
+            "<div class='min-w-0'><div class='text-sm font-semibold text-down'>" + title + "</div>" +
+            "<div class='num text-xs text-muted'>" + sub + "</div></div>";
+        box.appendChild(t);
+        const live = box.querySelectorAll(".toast-live");
+        for (let i = 0; i < live.length - MAX_LIVE; i++) live[i].remove();   // drop the oldest
+        setTimeout(() => t.remove(), LIFETIME_MS);
+      }
+
+      // One pop-up per poll for each kind: single readings in detail, batches combined.
+      function showEvents(events) {
+        const minted = events.filter((e) => e.minted);
+        const rejected = events.filter((e) => e.decision === "rejected");
+        if (minted.length === 1) {
+          const e = minted[0];
+          addToast("/readings/" + e.id, true, "+" + e.vkwh + " VKWH", "earned for reading #" + e.seq + " · " + e.mwh + " mWh verified");
+        } else if (minted.length > 1) {
+          const mwh = minted.reduce((sum, e) => sum + e.mwh, 0);
+          addToast("/readings", true, "+" + (mwh / 1e6).toFixed(6) + " VKWH",
+                   "earned from " + minted.length + " readings · " + mwh + " mWh verified");
+        }
+        if (rejected.length === 1) {
+          const e = rejected[0];
+          addToast("/readings/" + e.id, false, "Reading #" + e.seq + " rejected", e.reasons + " · recorded on Hedera");
+        } else if (rejected.length > 1) {
+          const codes = [...new Set(rejected.map((e) => e.reasons))].join(", ");
+          addToast("/readings?show=rejected", false, rejected.length + " readings rejected", codes + " · recorded on Hedera");
+        }
       }
 
       async function poll() {
@@ -246,7 +272,7 @@
           const res = await fetch("/api/me/events" + (cursor !== null ? "?after=" + cursor : ""));
           if (!res.ok) return;
           const data = await res.json();
-          data.events.filter((e) => e.minted || e.decision === "rejected").forEach(show);
+          showEvents(data.events);
           if (data.events.some((e) => e.minted) && window.htmx && document.getElementById("balances")) {
             htmx.ajax("GET", "/wallet/balances", "#balances");
           }

@@ -144,6 +144,21 @@ def test_events_wait_until_hedera_has_finished(client, engine):
     assert data == {"cursor": 0, "events": []}                  # no hcs_tx yet and only seconds old
 
 
+def test_old_backlog_is_skipped_but_new_decisions_still_pop_up(client, engine):
+    """After time away, hundreds of old readings must not flood the screen."""
+    signup(client)
+    old = datetime.now(timezone.utc) - timedelta(minutes=10)
+    backlog = [Reading(meter_id="VD-0001", seq=s, t_start_ms=0, t_end_ms=60000, mwh=150, peak_mw=9000,
+                       avg_mv=18000, avg_ma=500, hash="x", decision="accepted", hcs_tx=TX, mint_tx=TX,
+                       created_at=old) for s in range(1, 51)]
+    add(engine, real_meter(), *backlog)
+    data = client.get("/api/me/events?after=0").json()
+    assert data["events"] == [] and data["cursor"] == 50         # skipped silently, cursor caught up
+    client.post("/api/readings", json=make_reading(seq=51))      # a fresh one
+    fresh = client.get(f"/api/me/events?after={data['cursor']}").json()["events"]
+    assert [e["seq"] for e in fresh] == [51]
+
+
 def test_events_need_login(client):
     assert client.get("/api/me/events").status_code == 401
 

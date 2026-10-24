@@ -458,6 +458,7 @@ def reading_hcs(request: Request, db: DbSession, user: CurrentUser, reading_id: 
 # --- Live events (pop-ups) ------------------------------------------------------
 
 SETTLE_SECONDS = 30   # a reading still waiting on Hedera after this long is reported anyway
+EVENT_MAX_AGE_SECONDS = 90   # older decisions don't pop up (no backlog flood after time away)
 
 
 @app.get("/api/me/events")
@@ -473,15 +474,20 @@ def my_events(db: DbSession, user: CurrentUser, after: int | None = None) -> JSO
         latest = db.exec(select(func.coalesce(func.max(Reading.id), 0)).where(Reading.meter_id == meter.meter_id)).one()
         return JSONResponse({"cursor": latest, "events": []})
     rows = db.exec(select(Reading).where(Reading.meter_id == meter.meter_id, Reading.id > after)
-                   .order_by(Reading.id).limit(10)).all()
-    settled_before = datetime.now(timezone.utc) - timedelta(seconds=SETTLE_SECONDS)
+                   .order_by(Reading.id).limit(200)).all()
+    now = datetime.now(timezone.utc)
+    settled_before = now - timedelta(seconds=SETTLE_SECONDS)
+    too_old = now - timedelta(seconds=EVENT_MAX_AGE_SECONDS)
     events, cursor = [], after
     for r in rows:
-        if not (r.hcs_tx or as_utc(r.created_at) < settled_before):
+        created = as_utc(r.created_at)
+        if not (r.hcs_tx or created < settled_before):
             break                               # still talking to Hedera: report it next time
+        cursor = r.id
+        if created < too_old:
+            continue                            # old news: skip silently (it's on the Readings page)
         events.append({"id": r.id, "seq": r.seq, "decision": r.decision, "reasons": r.reasons,
                        "mwh": r.mwh, "vkwh": format_vkwh(r.mwh), "minted": bool(r.mint_tx)})
-        cursor = r.id
     return JSONResponse({"cursor": cursor, "events": events})
 
 
