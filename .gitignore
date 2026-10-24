@@ -14,3 +14,6 @@ __pycache__/
 
 # Serial bridge reading log
 gateway/.bridge/
+
+# Local working notes (not published)
+notes/
