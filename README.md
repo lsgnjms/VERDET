@@ -196,5 +196,5 @@ gateway/    canonical signed format, simulator, serial bridge, attack scripts
 firmware/   Arduino Mega meter firmware (meter/) and the signing spike (spike/)
 scripts/    one-time Hedera setup, SDK spike, password reset
 tests/      pytest suite
-docs/       Hedera SDK notes, UI plan
+docs/       Hedera SDK notes
 ```

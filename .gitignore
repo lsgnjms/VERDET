@@ -17,3 +17,5 @@ gateway/.bridge/
 
 # Local working notes (not published)
 notes/
+phase-*-steps.md
+ui-plan.md
