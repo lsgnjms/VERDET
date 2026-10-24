@@ -14,7 +14,7 @@ A meter signs every reading of a solar panel's output. VERDET checks each readin
 
 ## Track alignment
 
-| Track theme | What VERDET does |
+|Tech Track theme | What VERDET does |
 |---|---|
 | **Peer-to-peer energy trading** | Users list verified energy (VKWH) at a price per kWh; buyers pay in HBAR. Each purchase is **one** Hedera `TransferTransaction` carrying both legs: the VKWH and the HBAR move together or not at all. |
 | **Tokenized incentives for clean energy** | Every accepted reading mints VKWH to the meter owner. VKWH can be spent on airtime and data (GreenAfrica-style rewards); the spent VKWH is returned to the treasury and **burned**. |
