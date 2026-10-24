@@ -1,9 +1,8 @@
 # VERDET — Build Plan (v2)
 
 **VER**ifiable **D**ecentralized **E**nergy **T**rading
-IEEE ClimateChain Global Hackathon · **Track: Renewable Energy & Energy Trading**
-Deadline: **Sun Oct 25, 2026, 3:00 pm GMT+1 (Lagos)**. Eligibility and the submission window have been confirmed with the organizers.
-Budget: **10 days × 4 h = 40 h**. Day 1 = Mon Oct 12 → Day 10 = Wed Oct 21. Oct 22–24 is buffer.
+
+
 
 **Changes from v1:** Python end to end (FastAPI) instead of Next.js/TypeScript. The AI verifier now runs inside the main app, not as a separate service. Trading is cut to a single feature: a fixed-price marketplace with atomic swaps. Login is locked as email and password. Eligibility has been checked against the rules.
 
@@ -22,7 +21,7 @@ A working, installable PWA where a user:
 
 A **public impact page** shows total verified kWh, estimated diesel displaced and CO₂ avoided, and links to the on-chain proof. No login is needed.
 
-**Precedent:** GreenAfrica (winner, 2025 Hedera Africa Hackathon). The pattern is: a device captures something real → verification rejects fakes → Hedera records proof → the user gets a reward → a public dashboard shows impact.
+**Precedent:** GreenAfrica. The pattern is: a device captures something real → verification rejects fakes → Hedera records proof → the user gets a reward → a public dashboard shows impact.
 **VERDET's additions:** the meter signs its own readings; an AI and physics gate; every rejection is recorded on-chain; peer-to-peer trading via atomic swap.
 
 ### Non-goals
@@ -35,8 +34,6 @@ A **public impact page** shows total verified kWh, estimated diesel displaced an
 
 ### Assumptions
 - Solo entry. The rules allow individual submissions and independent developers.
-- Panel rating and load are **TBD**. Software is built against a **simulated meter** with the identical signed format, so hardware never blocks progress.
-- You're new to Python backends. Code is delivered in small pieces, and each phase ends with a check you can run yourself.
 
 ---
 
@@ -225,7 +222,7 @@ Don't start the next phase until the current checkpoint passes.
 ---
 
 ### Phase 5 — AI verification: DROPPED (Oct 20)
-No real hardware deployment for the demo, so a solar-model/AI check adds little; dropped with the organisers' guidance in mind. The verification pipeline is four checks (registered → signature → sequence → physics). Listed in §5.
+Dropped. The verification pipeline is four checks (registered → signature → sequence → physics). Listed in §5.
 
 ---
 
@@ -279,8 +276,7 @@ No real hardware deployment for the demo, so a solar-model/AI check adds little;
 - [ ] Full run on production: sign up → register meter → generate → mint → sell → impact page
 - [ ] `README.md` covering the submission requirements: track alignment, problem, solution, **target users**, **how it scales**, **how easily it can be adopted**, how to run it, testnet IDs, honest limits
 - [ ] `docs/architecture.png`, `docs/threat-model.md` (lamp, hardware tampering, gateway censorship → secure element, tamper-evident enclosure, installer attestation, spot audits)
-- [ ] Demo script (3–5 min): climate problem → meter → HCS → token → trade → impact, plus the four on-camera rejections (unregistered, fake spike, replay, duplicate)
-- [ ] Rehearse twice and time it
+
 
 **Deliverables:** README, docs, demo script
 **Checkpoint:** A fresh clone following the README runs the simulator flow locally, and the rehearsal runs under 5 minutes with no manual fixes.
@@ -291,13 +287,7 @@ No real hardware deployment for the demo, so a solar-model/AI check adds little;
 ### Phase 9 — Video and submission (Day 10, 4 h)
 **Goal:** The entry is complete and ready to submit within the window the organizers confirm.
 
-- [ ] Record the demo video (real hardware, live HashScan, phone PWA) and upload it (YouTube, unlisted)
-- [ ] Fill in the Devpost form and **save it as a draft**: track alignment, description, repo, video, live URL, screenshots
-- [ ] Check every link logged-out in an incognito window
-- [ ] Submit within the window the organizers confirmed
-
 **Deliverables:** video, completed Devpost submission
-**Checkpoint:** The Devpost page shows "Submitted" and every link works logged-out.
 **Effort:** 4 h
 
 **Total: 40 h.**
@@ -309,7 +299,7 @@ No real hardware deployment for the demo, so a solar-model/AI check adds little;
 | # | Risk / unknown | Plan |
 |---|---|---|
 | R1 | ~~Eligibility~~ | **Resolved** with the organizers. |
-| R2 | ~~Submission window conflict~~ | **Resolved** with the organizers. Still finish by Oct 24 and keep the Devpost draft ready. |
+| R2 | ~~Submission window conflict~~ | **Resolved** with the organizers. Still finish by Oct 24.
 | R3 | **Python SDK gaps.** The Hiero Python SDK is younger than the JS one; the two-signature atomic swap is the most likely gap. | Tested on Day 1 in `spike.py`. Fallback A: two sequential transfers with the offer locked between them (not atomic, stated honestly). Fallback B: one small Node script for the swap only. |
 | R4 | **First Python backend.** | FastAPI with small, reviewed code drops; every phase has a runnable checkpoint; no frontend framework to learn. |
 | R5 | **Ed25519 on the Mega** fails, is too slow, or uses too much memory. | Tested on Day 1. Fallback: HMAC-SHA256 with a per-meter secret (weaker, since the server shares the secret), stated in the threat model. |

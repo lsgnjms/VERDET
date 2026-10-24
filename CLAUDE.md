@@ -90,5 +90,5 @@ python gateway/serial_bridge.py --port COM3   # real meter
 - Branch: `main`. Commit at every passing checkpoint.
 - Marketplace (Oct 19): sellers enter **price per kWh**; the total is computed. Price band `PRICE_MIN/MAX_HBAR_PER_KWH` in `.env`.
 - Redemption (Oct 19): VKWH → treasury → burned, recorded on the `redemptions` topic (`REDEMPTIONS_TOPIC_ID`); phone numbers are masked in HCS messages; airtime/data delivery is a labelled demo voucher. Never claim real airtime was sent.
-- Oct 20 (organisers' advice, parts didn't arrive): **Phase 5 dropped.** **Phase 4 is a mock-up** (`docs/wiring-mockup.png`: 20 W panel or 12 V adapter, ACS712-20A, 47 kΩ/10 kΩ divider, fan), uncalibrated, showing real signed readings. Demo VKWH comes from the simulator against the deployed app; say so in the video. Priorities: deploy, mock-up, demo data, docs, video.
+- Oct 20 (organisers' advice, parts didn't arrive): **Phase 5 dropped.** **Phase 4 is a mock-up** (`docs/wiring-mockup.png`: 20 W panel or 12 V adapter, ACS712-20A, 47 kΩ/10 kΩ divider, DC motor), uncalibrated, showing real signed readings. Demo VKWH comes from the simulator against the deployed app; say so in the video. Priorities: deploy, mock-up, demo data, docs, video.
 - Licence and what to publish: decided after the hackathon results. Until then, push as is.
